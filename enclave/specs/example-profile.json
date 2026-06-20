@@ -1,0 +1,15 @@
+{
+  "spec_id": 1,
+  "issued_at": 0,
+  "label": "example-client",
+  "stack": "Rustls",
+  "cipher_list": "",
+  "sigalgs": [],
+  "groups": ["X25519", "P-256"],
+  "alpn": ["http/1.1"],
+  "grease": "Disabled",
+  "ext_order": "Fixed",
+  "min_negotiated": "Tls12",
+  "cert_policy": "WebpkiRoots",
+  "h2": null
+}

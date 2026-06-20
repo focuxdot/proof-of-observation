@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Note: this CI validates correctness (enclave tests + verifier tests) on a
+# standard x86 runner. Reproducing the canonical **PCR0** requires an aarch64
+# host with the AWS Nitro CLI and is performed out-of-band — see
+# docs/tee-reproducible-build.md.
+
+jobs:
+  enclave:
+    name: enclave (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install C toolchain (btls / vendored OpenSSL build)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake clang libclang-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test
+        working-directory: enclave
+        run: cargo test --locked
+
+  verifier:
+    name: verifier (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install
+        working-directory: verifier
+        run: npm ci
+      - name: test
+        working-directory: verifier
+        run: npm test

@@ -1,0 +1,30 @@
+[package]
+name = "attest"
+version = "0.4.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"  # 双许可(Rust 生态标准,与 btls/BoringSSL/OpenSSL 依赖兼容)。全文见 LICENSE-MIT / LICENSE-APACHE;第三方 attribution 见 NOTICE。
+
+[dependencies]
+aws-nitro-enclaves-nsm-api = "0.4"
+serde_bytes = "0.11"
+ed25519-dalek = "2"
+getrandom = "0.2"
+vsock = "0.5"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "0.26"
+btls = { version = "0.5", features = ["prefix-symbols"] } # prefix-symbols → 与 vendored openssl 同二进制共存(避免符号冲突)
+openssl = { version = "0.10", features = ["vendored"] }
+
+[[bin]]
+name = "attest"
+path = "src/main.rs"
+
+# spec 编码器(离线/CI;复用 lib 的 tls_profile::canonical_encode)。
+# 不链 boring → Mac 可编。飞地可复现构建会顺带编它,但只 COPY /attest → 不进 EIF、不影响 PCR0。
+[[bin]]
+name = "profile-encode"
+path = "src/bin/profile-encode.rs"

@@ -1,0 +1,8 @@
+target/
+*.eif
+# 父实例侧运维脚本：不进 EIF、不影响 PCR0（Dockerfile 也只 COPY Cargo.* 与 src/）
+enclave-supervisor.sh
+*.service
+metrics-scrape.py
+parent-real.py
+reproducible-build.sh

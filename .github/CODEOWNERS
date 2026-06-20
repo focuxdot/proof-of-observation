@@ -1,0 +1,12 @@
+# Default owners for everything in this repo.
+* @focuxdot
+
+# Trust-critical areas warrant extra review.
+/enclave/src/main.rs          @focuxdot
+/enclave/src/egress_boring.rs @focuxdot
+/enclave/src/egress_openssl.rs @focuxdot
+/enclave/src/tls_profile.rs   @focuxdot
+/enclave/Dockerfile           @focuxdot
+/verifier/signing.ts          @focuxdot
+/verifier/tee-verify-core.ts  @focuxdot
+/.github/workflows/           @focuxdot
