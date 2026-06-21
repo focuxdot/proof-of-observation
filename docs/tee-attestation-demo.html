@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TEE + 签名 · 中转自证原理演示</title>
+<title>用户如何自证中转没有偷换 · Proof of Observation 验证原理</title>
 <style>
   :root{
     --bg:#f5f7fb; --panel:#ffffff; --panel2:#eef2f8; --line:#dde3ec;
@@ -180,6 +180,34 @@
   .att-note{font-size:12.5px;color:var(--ok)}
   .pin{display:inline-block;font-size:10.5px;font-weight:700;color:var(--accent);border:1px solid rgba(47,111,219,.5);border-radius:5px;padding:1px 6px;margin-left:6px}
   footer{margin-top:60px;color:var(--faint);font-size:12px;text-align:center;border-top:1px solid var(--line);padding-top:20px}
+  /* ===== 三拍原理 ===== */
+  .beats{display:grid;gap:14px;margin-bottom:6px}
+  .beat{display:flex;gap:16px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .beat .bn{flex-shrink:0;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff}
+  .beat.b1 .bn{background:var(--bad)} .beat.b2 .bn{background:var(--accent)} .beat.b3 .bn{background:var(--enclave)}
+  .beat .bb{flex:1;min-width:0}
+  .beat .bt{font-size:16px;font-weight:700;margin-bottom:6px}
+  .beat .bt .tag{font-size:11px;font-weight:700;letter-spacing:.5px;padding:2px 9px;border-radius:20px;margin-left:8px;vertical-align:middle}
+  .beat.b1 .bt .tag{background:rgba(226,55,68,.12);color:var(--bad)} .beat.b2 .bt .tag{background:rgba(47,111,219,.12);color:var(--accent)} .beat.b3 .bt .tag{background:rgba(106,69,230,.13);color:var(--enclave)}
+  .beat .bd{font-size:14px;color:var(--dim);line-height:1.62}
+  .beat .bd b{color:var(--txt)}
+  .beat .bd code{font-family:var(--mono);font-size:12.5px;color:var(--accent);background:rgba(47,111,219,.08);padding:1px 5px;border-radius:4px}
+  .beat .bchecks{margin:11px 0 0;display:grid;gap:7px}
+  .beat .bchecks .bc{font-size:13px;color:var(--dim);padding-left:22px;position:relative;line-height:1.5}
+  .beat .bchecks .bc b{color:var(--txt)}
+  .beat .bchecks .bc::before{content:"\2713";position:absolute;left:0;color:var(--ok);font-weight:700}
+  .analogy{margin-top:16px;background:rgba(47,111,219,.05);border:1px solid rgba(47,111,219,.3);border-radius:14px;padding:18px 20px}
+  .analogy .at{font-weight:700;font-size:15px;margin-bottom:4px}
+  .analogy .asub{font-size:13px;color:var(--dim);margin-bottom:15px;line-height:1.6}
+  .map{display:grid;grid-template-columns:1fr 26px 1fr;gap:9px 14px;align-items:center}
+  .map .mh{font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--faint);text-transform:uppercase}
+  .map .mk{font-weight:600;font-size:13.5px;text-align:right;color:var(--dim)}
+  .map .meq{color:var(--faint);font-weight:700;text-align:center}
+  .map .mv{font-size:13.5px;color:var(--enclave);font-weight:600}
+  .map .mh:nth-child(3){text-align:left}
+  .edge{margin-top:15px;font-size:13px;color:var(--faint);line-height:1.62}
+  .edge b{color:var(--dim)}
+  @media(max-width:760px){.beat{flex-direction:column;gap:10px}.map{grid-template-columns:1fr}.map .mk{text-align:left}.map .meq{display:none}.map .mh:nth-child(2){display:none}}
 </style>
 </head>
 <body>
@@ -189,9 +217,42 @@
   <button class="lt" id="lang-en">EN</button>
 </div>
 
-<h1 data-i18n="h1">中转站「不必信任运营方」的自证原理</h1>
-<p class="sub" data-i18n="sub1">TEE 远程证明 + 响应签名 · 交互演示</p>
-<div class="quote" data-i18n="quote">整套机制只回答一个问题：<br>如何<span class="hl">信任中转的输出</span>，却<span class="hl">不必信任运营方这个人</span>？</div>
+<h1 data-i18n="h1">用户如何自证中转没有偷换</h1>
+<p class="sub" data-i18n="sub1">Proof of Observation 验证原理 · TEE 远程证明 + 响应签名</p>
+<div class="quote" data-i18n="quote">整套机制只回答一个问题：<br>如何<span class="hl">验证中转的输出</span>，却<span class="hl">不必信任运营方这个人</span>？<br><span class="hl">Don't trust, verify.</span></div>
+
+<!-- ===== 原理 · 三拍 ===== -->
+<section>
+  <h2 data-i18n="h2_principle">原理 · 三拍讲完</h2>
+  <div class="beats">
+    <div class="beat b1">
+      <div class="bn">1</div>
+      <div class="bb">
+        <div class="bt" data-i18n="p1_t">问题</div>
+        <div class="bd" data-i18n="p1_d">你用中转站调 OpenAI。运营方掌握服务器，他能<b>偷换成便宜模型</b>、能<b>改你拿到的答案</b>、能在转发途中动手脚。你怎么知道他没干？以前——只能信他这个人。</div>
+      </div>
+    </div>
+    <div class="beat b2">
+      <div class="bn">2</div>
+      <div class="bb">
+        <div class="bt" data-i18n="p2_t">办法 · 一句话</div>
+        <div class="bd" data-i18n="p2_d">把中转的核心逻辑塞进一个<b>硬件保险箱（TEE）</b>。箱子的厂商（AWS）能出具一张<b>硬件签名的“出生证”</b>，上面写两件事：① 箱子里跑的是哪段代码（<code>PCR0</code> 指纹）；② 箱子这次开机<b>随机生成的签名公钥</b>。之后箱子用这把钥给每条响应签名。于是你不再信运营方，只需核三件事：</div>
+        <div class="bchecks">
+          <div class="bc" data-i18n="p2_c1"><b>代码指纹 == 公开审计源码</b>（而源码写死“只调官方”）→ 没偷换模型</div>
+          <div class="bc" data-i18n="p2_c2"><b>响应签名能用出生证里那把公钥验通过</b> → 没被改、出自这箱子</div>
+          <div class="bc" data-i18n="p2_c3"><b>出生证本身链到 AWS 根</b> → 这箱子是真 AWS 硬件，非伪造</div>
+        </div>
+      </div>
+    </div>
+    <div class="beat b3">
+      <div class="bn">3</div>
+      <div class="bb">
+        <div class="bt" data-i18n="p3_t">焊点 · 为什么绕不过去</div>
+        <div class="bd" data-i18n="p3_d">关键一步：<b>那把签名公钥，是被写进出生证、和代码指纹一起被 AWS 签的</b>。于是“代码是诚实的”和“这把钥属于那个诚实箱子”焊成一条链——运营方自造一把钥签便宜货？<b>那把钥不在任何 AWS 出生证里，你根本不认。</b></div>
+      </div>
+    </div>
+  </div>
+  </section>
 
 <!-- ===== 两个支柱 ===== -->
 <section>
@@ -376,9 +437,30 @@ const L = (zh, en) => LANG === 'en' ? en : zh;
 
 // English overrides for every [data-i18n] node (zh stays inline as the source of truth)
 const EN = {
-  h1: `How a relay proves itself — so you needn't trust its operator`,
-  sub1: `TEE remote attestation + response signing · interactive demo`,
-  quote: `The whole mechanism answers one question:<br>how can you <span class="hl">trust a relay's output</span> without having to <span class="hl">trust the operator as a person</span>?`,
+  h1: `How users prove a relay did not swap the response`,
+  sub1: `Proof of Observation verification principle · TEE remote attestation + response signing`,
+  quote: `The whole mechanism answers one question:<br>how can you <span class="hl">verify a relay's output</span> without having to <span class="hl">trust the operator as a person</span>?<br><span class="hl">Don't trust, verify.</span>`,
+  h2_principle: `The principle — in three beats`,
+  p1_t: `The problem`,
+  p1_d: `You use a relay to call OpenAI. The operator controls the server: they can <b>swap in a cheaper model</b>, <b>edit the answer you get</b>, or tamper in transit. How would you know they didn't? Until now — you could only trust them as a person.`,
+  p2_t: `The fix · in one sentence`,
+  p2_d: `Run the relay's core inside a <b>hardware box (a TEE)</b>. The box's vendor (AWS) can issue a <b>hardware-signed “birth certificate”</b> stating two things: ① which code runs inside (its <code>PCR0</code> fingerprint); ② the <b>signing public key the box randomly generated</b> this boot. The box then signs every response with that key. So you stop trusting the operator and just check three things:`,
+  p2_c1: `<b>code fingerprint == public audited source</b> (which hard-codes “only call the official API”) → no model swap`,
+  p2_c2: `<b>the response signature verifies with the public key in the certificate</b> → unaltered, and from this box`,
+  p2_c3: `<b>the certificate itself chains to the AWS root</b> → this box is genuine AWS hardware, not a forgery`,
+  p3_t: `The weld · why it can't be bypassed`,
+  p3_d: `The key step: <b>that signing public key is written into the certificate and signed by AWS together with the code fingerprint</b>. So “the code is honest” and “this key belongs to that honest box” are welded into one chain — the operator makes their own key and signs a cheap response? <b>That key is in no AWS certificate, so you simply don't honor it.</b>`,
+  an_t: `This is just HTTPS — which you already understand`,
+  an_sub: `You never know a website's public key in advance, but you trust the CA root; the CA-signed certificate binds “identity ↔ public key”, and you just verify the certificate. This mechanism maps one-to-one:`,
+  an_h2: `this mechanism`,
+  an_v1: `AWS (hardware root)`,
+  an_k2: `website certificate`,
+  an_v2: `attestation document`,
+  an_k3: `domain (identity)`,
+  an_v3: `PCR0 (code identity)`,
+  an_k4: `website public key`,
+  an_v4: `the box's random signing key`,
+  an_edge: `A website can restart with a new key and reissue its certificate — you still verify; a TEE rebooting with a new key is the same. <b>Honest limit:</b> you haven't abolished trust, only moved it from “the operator as a person” to “AWS hardware + public code you can reproducibly build yourself”; and OpenAI doesn't sign its own responses, so “the official API genuinely produced this” reaches at most “the box observed it over real TLS”, never pure math.`,
   h2_facts: `It rests on two independent pillars — neither alone is enough`,
   tagA: `Pillar A · Signature`,
   h3A: `Proves "this exchange wasn't altered"`,
@@ -531,7 +613,7 @@ function applyLang(){
     el.innerHTML = (LANG === 'en' && EN[k] != null) ? EN[k] : zhCache[k];
   });
   document.documentElement.lang = LANG === 'en' ? 'en' : 'zh-CN';
-  document.title = LANG === 'en' ? 'TEE + signing · how a relay proves itself' : 'TEE + 签名 · 中转自证原理演示';
+  document.title = LANG === 'en' ? 'How users prove a relay did not swap the response · Proof of Observation' : '用户如何自证中转没有偷换 · Proof of Observation 验证原理';
 }
 function updateToggle(){
   $('lang-zh').classList.toggle('active', LANG !== 'en');

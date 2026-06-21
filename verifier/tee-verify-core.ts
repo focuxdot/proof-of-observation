@@ -200,22 +200,250 @@ export const TEE_PROOF_EVENT = 'tee.proof';
 export interface ParsedTeeProofStream {
   body: Buffer; // 上游原文(飞地签名的字节)
   proof?: TeeProofWire; // 末尾 tee.proof 事件(无则 undefined)
+  ignoredLeadingBlankBytes?: number; // 粘贴 body+proof 尾段时用户手动多加的开头空行,经 proof hash 证明后忽略
 }
 
-export function parseTeeProofEvent(streamText: string): ParsedTeeProofStream {
-  const marker = `event: ${TEE_PROOF_EVENT}\n`;
-  const idx = streamText.lastIndexOf(marker);
-  if (idx < 0) return { body: Buffer.from(streamText, 'utf8') };
-  const before = streamText.slice(0, idx);
-  const eventBlock = streamText.slice(idx);
-  const dataLine = eventBlock.split('\n').find((line) => line.startsWith('data: '));
+type MultipartPart = {
+  headers: string;
+  body: Buffer;
+  nextBoundaryOffset: number;
+};
+
+export function parseTeeProofEvent(stream: string | Buffer | Uint8Array): ParsedTeeProofStream {
+  const bytes = teeCaptureBytes(stream);
+  const lfMarker = Buffer.from(`event: ${TEE_PROOF_EVENT}\n`, 'utf8');
+  const crlfMarker = Buffer.from(`event: ${TEE_PROOF_EVENT}\r\n`, 'utf8');
+  const lfIdx = bytes.lastIndexOf(lfMarker);
+  const crlfIdx = bytes.lastIndexOf(crlfMarker);
+  const idx = Math.max(lfIdx, crlfIdx);
+  if (idx < 0) return { body: bytes };
+  const eventBlock = bytes.subarray(idx).toString('utf8');
+  const match = eventBlock.match(/^event: tee\.proof\r?\ndata: ([^\r\n]+)\r?\n\r?\n[\t\n\r ]*$/);
+  if (!match) return { body: bytes };
+  try {
+    const proof = JSON.parse(match[1]) as TeeProofWire;
+    return { body: bytes.subarray(0, idx), proof };
+  } catch {
+    return { body: bytes };
+  }
+}
+
+export function parseTeeProofCapture(stream: string | Buffer | Uint8Array, contentType?: string): ParsedTeeProofStream {
+  const parsedSse = parseTeeProofEvent(stream);
+  if (parsedSse.proof) return parsedSse;
+  return parseTeeProofMultipartResponse(stream, contentType) ?? parsedSse;
+}
+
+export function parseTeeProofMultipartResponse(
+  stream: string | Buffer | Uint8Array,
+  contentType?: string,
+): ParsedTeeProofStream | undefined {
+  const bytes = teeCaptureBytes(stream);
+  const first = firstMultipartBoundary(bytes);
+  const boundary = multipartBoundary(bytes, contentType, first);
+  if (!boundary) return undefined;
+  const boundaryBytes = Buffer.from(`--${boundary}`, 'utf8');
+  const startOffset = first?.boundary === boundary ? first.offset : 0;
+  if (startOffset > 0) {
+    const tailCapture = parseTeeProofMultipartTailCapture(bytes, boundaryBytes, startOffset);
+    if (tailCapture) return tailCapture;
+  }
+  const capture = bytes.subarray(startOffset);
+  const firstBoundary = readMultipartBoundary(capture, boundaryBytes, 0);
+  if (!firstBoundary || firstBoundary.closing) return undefined;
+  const responsePart = readMultipartPart(capture, boundaryBytes, firstBoundary.nextOffset);
+  if (!responsePart) return undefined;
+  const proofBoundary = readMultipartBoundary(capture, boundaryBytes, responsePart.nextBoundaryOffset);
+  if (!proofBoundary || proofBoundary.closing) return undefined;
+  const proofPart = readMultipartPart(capture, boundaryBytes, proofBoundary.nextOffset);
+  if (!proofPart) return undefined;
+  const closingBoundary = readMultipartBoundary(capture, boundaryBytes, proofPart.nextBoundaryOffset);
+  if (!closingBoundary?.closing) return undefined;
+
   let proof: TeeProofWire | undefined;
-  if (dataLine) {
-    try {
-      proof = JSON.parse(dataLine.slice('data: '.length)) as TeeProofWire;
-    } catch {
-      proof = undefined;
+  try {
+    const parsed = JSON.parse(proofPart.body.toString('utf8'));
+    if (parsed?.type !== 'tee.proof_unavailable') proof = parsed as TeeProofWire;
+  } catch {
+    proof = undefined;
+  }
+  return { body: responsePart.body, proof };
+}
+
+function parseTeeProofMultipartTailCapture(bytes: Buffer, boundaryBytes: Buffer, boundaryOffset: number): ParsedTeeProofStream | undefined {
+  if (boundaryOffset <= 0) return undefined;
+  const capture = bytes.subarray(boundaryOffset);
+  const proofBoundary = readMultipartBoundary(capture, boundaryBytes, 0);
+  if (!proofBoundary || proofBoundary.closing) return undefined;
+  const proofPart = readMultipartPart(capture, boundaryBytes, proofBoundary.nextOffset);
+  if (!proofPart || !isProofPartHeaders(proofPart.headers)) return undefined;
+  const closingBoundary = readMultipartBoundary(capture, boundaryBytes, proofPart.nextBoundaryOffset);
+  if (!closingBoundary?.closing) return undefined;
+
+  let proof: TeeProofWire | undefined;
+  try {
+    const parsed = JSON.parse(proofPart.body.toString('utf8'));
+    if (parsed?.type !== 'tee.proof_unavailable') proof = parsed as TeeProofWire;
+  } catch {
+    proof = undefined;
+  }
+  const normalized = removeLeadingBlankLinesIfSignedHashMatches(
+    stripBoundarySeparatorLineEnding(bytes.subarray(0, boundaryOffset)),
+    proof,
+  );
+  return { body: normalized.body, proof, ignoredLeadingBlankBytes: normalized.ignoredLeadingBlankBytes };
+}
+
+function teeCaptureBytes(stream: string | Buffer | Uint8Array): Buffer {
+  return typeof stream === 'string'
+    ? Buffer.from(stream, 'utf8')
+    : Buffer.isBuffer(stream)
+      ? stream
+      : Buffer.from(stream);
+}
+
+function multipartBoundary(bytes: Buffer, contentType?: string, first = firstMultipartBoundary(bytes)): string | undefined {
+  const fromContentType = contentType?.match(/boundary="?([^";]+)"?/i)?.[1];
+  if (fromContentType) return fromContentType;
+  return first?.boundary;
+}
+
+function firstMultipartBoundary(bytes: Buffer): { boundary: string; offset: number } | undefined {
+  let start = bytes.subarray(0, 2).equals(Buffer.from('--')) ? 0 : -1;
+  if (start < 0) {
+    for (let i = 0; i < bytes.length; i++) {
+      if (bytes[i] === 10 && bytes[i + 1] === 45 && bytes[i + 2] === 45) {
+        start = i + 1;
+        break;
+      }
     }
   }
-  return { body: Buffer.from(before, 'utf8'), proof };
+  if (start < 0) return undefined;
+  const lineEnd = bytes.indexOf(0x0a, start);
+  if (lineEnd < 0) return undefined;
+  let firstLine = bytes.subarray(start, lineEnd).toString('utf8');
+  if (firstLine.endsWith('\r')) firstLine = firstLine.slice(0, -1);
+  if (!firstLine.startsWith('--') || firstLine.endsWith('--')) return undefined;
+  return { boundary: firstLine.slice(2), offset: start };
+}
+
+function readMultipartBoundary(bytes: Buffer, boundaryBytes: Buffer, offset: number): { closing: boolean; nextOffset: number } | undefined {
+  if (!bytes.subarray(offset, offset + boundaryBytes.length).equals(boundaryBytes)) return undefined;
+  let p = offset + boundaryBytes.length;
+  const closing = bytes[p] === 45 && bytes[p + 1] === 45;
+  if (closing) p += 2;
+  if (closing && p === bytes.length) return { closing, nextOffset: p };
+  const nextOffset = consumeLineEnding(bytes, p);
+  if (nextOffset < 0) return undefined;
+  return { closing, nextOffset };
+}
+
+function readMultipartPart(bytes: Buffer, boundaryBytes: Buffer, offset: number): MultipartPart | undefined {
+  const headerEnd = multipartHeaderEnd(bytes, offset);
+  if (!headerEnd) return undefined;
+  const headers = bytes.subarray(offset, headerEnd.headerEnd).toString('utf8');
+  const length = multipartContentLength(headers);
+  const bodyStart = headerEnd.bodyStart;
+  let bodyEnd = -1;
+  let nextBoundaryOffset = -1;
+  if (length !== undefined) {
+    const expectedEnd = bodyStart + length;
+    if (expectedEnd <= bytes.length) {
+      const expectedNext = consumeLineEnding(bytes, expectedEnd);
+      if (expectedNext >= 0 && bytes.subarray(expectedNext, expectedNext + boundaryBytes.length).equals(boundaryBytes)) {
+        bodyEnd = expectedEnd;
+        nextBoundaryOffset = expectedNext;
+      }
+    }
+  }
+  if (bodyEnd < 0) {
+    const crlfBoundary = bytes.indexOf(Buffer.concat([Buffer.from('\r\n', 'utf8'), boundaryBytes]), bodyStart);
+    const lfBoundary = bytes.indexOf(Buffer.concat([Buffer.from('\n', 'utf8'), boundaryBytes]), bodyStart);
+    let marker = -1;
+    let markerLength = 0;
+    if (crlfBoundary >= 0 && (lfBoundary < 0 || crlfBoundary <= lfBoundary)) {
+      marker = crlfBoundary;
+      markerLength = 2;
+    } else if (lfBoundary >= 0) {
+      marker = lfBoundary;
+      markerLength = 1;
+    }
+    if (marker < 0) return undefined;
+    bodyEnd = marker;
+    nextBoundaryOffset = marker + markerLength;
+  }
+  return {
+    headers,
+    body: Buffer.from(bytes.subarray(bodyStart, bodyEnd)),
+    nextBoundaryOffset,
+  };
+}
+
+function multipartHeaderEnd(bytes: Buffer, offset: number): { headerEnd: number; bodyStart: number } | undefined {
+  const crlf = bytes.indexOf(Buffer.from('\r\n\r\n', 'utf8'), offset);
+  const lf = bytes.indexOf(Buffer.from('\n\n', 'utf8'), offset);
+  if (crlf >= 0 && (lf < 0 || crlf < lf)) return { headerEnd: crlf, bodyStart: crlf + 4 };
+  if (lf >= 0) return { headerEnd: lf, bodyStart: lf + 2 };
+  return undefined;
+}
+
+function multipartContentLength(headers: string): number | undefined {
+  for (const line of headers.split(/\r?\n/)) {
+    const match = line.match(/^content-length:\s*(\d+)\s*$/i);
+    if (!match) continue;
+    const value = Number.parseInt(match[1], 10);
+    return Number.isFinite(value) && value >= 0 ? value : undefined;
+  }
+  return undefined;
+}
+
+function consumeLineEnding(bytes: Buffer, offset: number): number {
+  if (bytes[offset] === 13 && bytes[offset + 1] === 10) return offset + 2;
+  if (bytes[offset] === 10) return offset + 1;
+  return -1;
+}
+
+function isProofPartHeaders(headers: string): boolean {
+  return /content-disposition:\s*[^;\r\n]*(?:;\s*)?name="?proof"?/i.test(headers)
+    || /content-type:\s*application\/[^;\r\n]*proof[^;\r\n]*/i.test(headers);
+}
+
+function stripBoundarySeparatorLineEnding(bytes: Buffer): Buffer {
+  if (bytes.length >= 2 && bytes[bytes.length - 2] === 13 && bytes[bytes.length - 1] === 10) {
+    return Buffer.from(bytes.subarray(0, bytes.length - 2));
+  }
+  if (bytes.length >= 1 && bytes[bytes.length - 1] === 10) {
+    return Buffer.from(bytes.subarray(0, bytes.length - 1));
+  }
+  return Buffer.from(bytes);
+}
+
+function removeLeadingBlankLinesIfSignedHashMatches(
+  body: Buffer,
+  proof?: TeeProofWire,
+): { body: Buffer; ignoredLeadingBlankBytes?: number } {
+  const expected = typeof proof?.response_body_sha256 === 'string'
+    ? proof.response_body_sha256.toLowerCase()
+    : '';
+  if (!/^[a-f0-9]{64}$/.test(expected)) return { body };
+  if (sha256(body).toString('hex') === expected) return { body };
+
+  let offset = 0;
+  for (;;) {
+    const next = consumeLeadingBlankLine(body, offset);
+    if (next <= offset) return { body };
+    offset = next;
+    const candidate = Buffer.from(body.subarray(offset));
+    if (sha256(candidate).toString('hex') === expected) {
+      return { body: candidate, ignoredLeadingBlankBytes: offset };
+    }
+  }
+}
+
+function consumeLeadingBlankLine(bytes: Buffer, offset: number): number {
+  let p = offset;
+  while (bytes[p] === 32 || bytes[p] === 9) p++;
+  if (bytes[p] === 13 && bytes[p + 1] === 10) return p + 2;
+  if (bytes[p] === 10) return p + 1;
+  return -1;
 }

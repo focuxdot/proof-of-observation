@@ -8,7 +8,9 @@ import { describe, it, expect } from 'vitest';
 import { generateKeyPairSync, sign as edSign } from 'node:crypto';
 import {
   verifyTeeExchange,
+  parseTeeProofCapture,
   parseTeeProofEvent,
+  parseTeeProofMultipartResponse,
   TEE_PROOF_EVENT,
   type TeeProofWire,
   type AttestationVerifier,
@@ -183,10 +185,219 @@ describe('parseTeeProofEvent', () => {
     expect(parsed.proof?.upstream_host).toBe(HOST);
   });
 
+  it('splits proof from buffers without re-encoding the signed upstream bytes', () => {
+    const upstream = Buffer.concat([
+      Buffer.from('event: response.output_text.delta\r\ndata: {"delta":"', 'utf8'),
+      Buffer.from([0xff, 0x00, 0xfe]),
+      Buffer.from('"}\r\n\r\n', 'utf8'),
+    ]);
+    const { proof } = makeSigned({ responseBody: upstream });
+    const suffix = Buffer.from(`event: ${TEE_PROOF_EVENT}\r\ndata: ${JSON.stringify(proof)}\r\n\r\n`, 'utf8');
+    const parsed = parseTeeProofEvent(Buffer.concat([upstream, suffix]));
+
+    expect(parsed.body).toEqual(upstream);
+    expect(parsed.proof?.response_body_sha256).toBe(proof.response_body_sha256);
+  });
+
+  it('does not strip an invalid tee.proof-looking suffix', () => {
+    const upstream = Buffer.from('event: response.output_text.delta\ndata: {"delta":"ok"}\n\n', 'utf8');
+    const invalidSuffix = Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: {not-json}\n\n`, 'utf8');
+    const whole = Buffer.concat([upstream, invalidSuffix]);
+
+    const parsed = parseTeeProofEvent(whole);
+
+    expect(parsed.proof).toBeUndefined();
+    expect(parsed.body).toEqual(whole);
+  });
+
+  it('does not accept a proof event with unsigned trailing bytes', () => {
+    const upstream = Buffer.from('event: response.output_text.delta\ndata: {"delta":"ok"}\n\n', 'utf8');
+    const { proof } = makeSigned();
+    const suffix = Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8');
+    const trailing = Buffer.from('event: response.output_text.delta\ndata: {"delta":"unsigned"}\n\n', 'utf8');
+    const whole = Buffer.concat([upstream, suffix, trailing]);
+
+    const parsed = parseTeeProofEvent(whole);
+
+    expect(parsed.proof).toBeUndefined();
+    expect(parsed.body).toEqual(whole);
+  });
+
   it('returns no proof when the stream was not attested', () => {
     const upstream = 'event: message_stop\ndata: {}\n\n';
     const parsed = parseTeeProofEvent(upstream);
     expect(parsed.proof).toBeUndefined();
     expect(parsed.body.toString('utf8')).toBe(upstream);
   });
+
+  it('parses multipart captures with raw response bytes and tee proof', () => {
+    const rawBody = Buffer.from('{"id":"msg_1","content":[{"type":"text","text":"ok"}]}\n', 'utf8');
+    const { proof } = makeSigned({ responseBody: rawBody });
+    const multipart = formatMultipart({
+      rawBody,
+      rawContentType: 'application/json; charset=utf-8',
+      proof,
+      boundary: 'proof-observation-test',
+    });
+
+    const parsed = parseTeeProofMultipartResponse(multipart.body, multipart.contentType);
+
+    expect(parsed?.body).toEqual(rawBody);
+    expect(parsed?.proof?.response_body_sha256).toBe(proof.response_body_sha256);
+  });
+
+  it('parses multipart captures by boundary when response Content-Length is stale', () => {
+    const originalBody = Buffer.from('{"id":"msg_1","content":[{"type":"text","text":"ok"}]}\n', 'utf8');
+    const mutatedBody = Buffer.from('{"id":"msg_1","content":[{"type":"text","text":"xok"}]}\n', 'utf8');
+    const { proof } = makeSigned({ responseBody: originalBody });
+    const multipart = formatMultipart({
+      rawBody: mutatedBody,
+      rawContentType: 'application/json; charset=utf-8',
+      proof,
+      boundary: 'proof-observation-stale-length',
+      contentLengthOverride: originalBody.byteLength,
+    });
+
+    const parsed = parseTeeProofMultipartResponse(multipart.body, multipart.contentType);
+
+    expect(mutatedBody.byteLength).toBe(originalBody.byteLength + 1);
+    expect(parsed?.body).toEqual(mutatedBody);
+    expect(parsed?.proof?.response_body_sha256).toBe(proof.response_body_sha256);
+  });
+
+  it('infers multipart boundary from the captured body when headers were not saved', () => {
+    const rawBody = Buffer.from('event: response.completed\ndata: {"type":"response.completed"}\n\n', 'utf8');
+    const { proof } = makeSigned({ responseBody: rawBody });
+    const multipart = formatMultipart({
+      rawBody,
+      rawContentType: 'text/event-stream',
+      proof,
+      boundary: 'proof-observation-body-boundary',
+    });
+
+    const parsed = parseTeeProofCapture(multipart.body);
+
+    expect(parsed.body).toEqual(rawBody);
+    expect(parsed.proof?.public_key).toBe(proof.public_key);
+  });
+
+  it('skips command text before a full multipart capture', () => {
+    const rawBody = Buffer.from('{"id":"msg_1","content":[{"type":"text","text":"ok"}]}', 'utf8');
+    const { proof } = makeSigned({ responseBody: rawBody });
+    const multipart = formatMultipart({
+      rawBody,
+      rawContentType: 'application/json',
+      proof,
+      boundary: 'proof-observation-prefixed-boundary',
+    });
+    const capture = Buffer.concat([Buffer.from('curl -N https://api.example.com/v1/messages\n', 'utf8'), multipart.body]);
+
+    const parsed = parseTeeProofCapture(capture);
+
+    expect(parsed.body).toEqual(rawBody);
+    expect(parsed.proof?.response_body_sha256).toBe(proof.response_body_sha256);
+  });
+
+  it('parses terminal-copied captures that start with raw response then proof part', () => {
+    const rawBody = Buffer.from('{"id":"msg_1","content":[{"type":"text","text":"ok"}]}', 'utf8');
+    const { proof } = makeSigned({ responseBody: rawBody });
+    const capture = formatProofTailCapture({
+      rawBody,
+      proof,
+      boundary: 'proof-observation-tail-boundary',
+    });
+
+    const parsed = parseTeeProofCapture(capture);
+
+    expect(parsed.body).toEqual(rawBody);
+    expect(parsed.proof?.response_body_sha256).toBe(proof.response_body_sha256);
+  });
+
+  it('ignores pasted leading blank lines in body+proof captures only when the signed hash proves it', () => {
+    const rawBody = Buffer.from('{"id":"msg_1","content":[{"type":"text","text":"ok"}]}', 'utf8');
+    const { proof } = makeSigned({ responseBody: rawBody });
+    const capture = Buffer.concat([
+      Buffer.from('\n\n', 'utf8'),
+      formatProofTailCapture({
+        rawBody,
+        proof,
+        boundary: 'proof-observation-tail-leading-blanks',
+      }),
+    ]);
+
+    const parsed = parseTeeProofCapture(capture);
+
+    expect(parsed.body).toEqual(rawBody);
+    expect(parsed.ignoredLeadingBlankBytes).toBe(2);
+    expect(parsed.proof?.response_body_sha256).toBe(proof.response_body_sha256);
+  });
+
+  it('returns the raw multipart response body when the proof part says unavailable', () => {
+    const rawBody = Buffer.from('{"id":"msg_1","content":[]}', 'utf8');
+    const multipart = formatMultipart({
+      rawBody,
+      rawContentType: 'application/json',
+      proof: { type: 'tee.proof_unavailable', code: 'proof_unavailable', message: 'no proof', attested: false },
+      boundary: 'proof-observation-unavailable',
+    });
+
+    const parsed = parseTeeProofCapture(multipart.body);
+
+    expect(parsed.body).toEqual(rawBody);
+    expect(parsed.proof).toBeUndefined();
+  });
 });
+
+function formatMultipart(params: {
+  rawBody: Buffer;
+  rawContentType: string;
+  proof: TeeProofWire | { type: 'tee.proof_unavailable'; code: string; message: string; attested: false };
+  boundary: string;
+  contentLengthOverride?: number;
+}) {
+  const proofBody = Buffer.from(JSON.stringify(params.proof), 'utf8');
+  const responseHead = Buffer.from([
+    `--${params.boundary}`,
+    `Content-Type: ${params.rawContentType}`,
+    'Content-Disposition: inline; name="response"',
+    'Content-Transfer-Encoding: binary',
+    `Content-Length: ${params.contentLengthOverride ?? params.rawBody.byteLength}`,
+    '',
+    '',
+  ].join('\r\n'), 'utf8');
+  const proofHead = Buffer.from([
+    '',
+    `--${params.boundary}`,
+    'Content-Type: application/vnd.proof-observation.proof+json',
+    'Content-Disposition: attachment; name="proof"',
+    'Content-Transfer-Encoding: binary',
+    `Content-Length: ${proofBody.byteLength}`,
+    '',
+    '',
+  ].join('\r\n'), 'utf8');
+  const end = Buffer.from(`\r\n--${params.boundary}--\r\n`, 'utf8');
+  return {
+    body: Buffer.concat([responseHead, params.rawBody, proofHead, proofBody, end]),
+    contentType: `multipart/mixed; boundary=${params.boundary}`,
+  };
+}
+
+function formatProofTailCapture(params: {
+  rawBody: Buffer;
+  proof: TeeProofWire;
+  boundary: string;
+}) {
+  const proofBody = Buffer.from(JSON.stringify(params.proof), 'utf8');
+  const proofPart = Buffer.from([
+    '',
+    `--${params.boundary}`,
+    'Content-Type: application/vnd.proof-observation.proof+json',
+    'Content-Disposition: attachment; name="proof"',
+    'Content-Transfer-Encoding: binary',
+    `Content-Length: ${proofBody.byteLength}`,
+    '',
+    '',
+  ].join('\n'), 'utf8');
+  const end = Buffer.from(`\n--${params.boundary}--`, 'utf8');
+  return Buffer.concat([params.rawBody, proofPart, proofBody, end]);
+}
