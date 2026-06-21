@@ -39,10 +39,9 @@ const DOMAIN_V2: &str = "tee-exchange-v2";
 const MAX_HEAD: usize = 64 * 1024;
 const MAX_RESP: usize = 64 * 1024 * 1024;
 const MAX_REQ_HEAD: usize = 1024 * 1024;
-const MAX_REQ_CHUNK: usize = 8 * 1024 * 1024;
-const MAX_REQ_BODY_TOTAL: u64 = 256 * 1024 * 1024;
-const MAX_REQ_BODY_DURATION: Duration = Duration::from_secs(120);
-const IO_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_REQ_FRAME: usize = 20 * 1024 * 1024;
+const CONTROL_IO_TIMEOUT: Duration = Duration::from_secs(300);
+const UPSTREAM_IO_TIMEOUT: Duration = Duration::from_secs(300);
 const ADMIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 const N_WORKERS: usize = 64;
@@ -50,7 +49,7 @@ const QUEUE_CAP: usize = 256;
 const METRICS_PORT: u32 = 5006;
 
 const REQ_HEAD: u8 = 0x01;
-const REQ_BODY_CHUNK: u8 = 0x02;
+const REQ_BODY: u8 = 0x02;
 const RESP_HEAD: u8 = 0x10;
 const RESP_CHUNK: u8 = 0x11;
 const RESP_TRAILER: u8 = 0x12;
@@ -70,7 +69,6 @@ struct ReqHead {
     nonce: String,
     egress_port: u32,
     upstream: Upstream,
-    request_body_len: u64,
     token: Option<String>,
     #[serde(default)]
     tls_seed: Option<String>,
@@ -88,35 +86,6 @@ fn read_frame<R: Read>(r: &mut R, max: usize) -> std::io::Result<(u8, Vec<u8>)> 
     }
     let mut buf = vec![0u8; n];
     r.read_exact(&mut buf)?;
-    Ok((t, buf))
-}
-
-fn read_exact_deadline<R: Read>(r: &mut R, buf: &mut [u8], deadline: Instant) -> std::io::Result<()> {
-    let mut filled = 0;
-    while filled < buf.len() {
-        if Instant::now() >= deadline {
-            return Err(std::io::Error::new(ErrorKind::TimedOut, "请求体流式超过累计时限"));
-        }
-        match r.read(&mut buf[filled..]) {
-            Ok(0) => return Err(std::io::Error::new(ErrorKind::UnexpectedEof, "请求体提前 EOF")),
-            Ok(n) => filled += n,
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {}
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
-}
-
-fn read_chunk_frame<R: Read>(r: &mut R, deadline: Instant) -> std::io::Result<(u8, Vec<u8>)> {
-    let mut hdr = [0u8; 5];
-    read_exact_deadline(r, &mut hdr, deadline)?;
-    let t = hdr[0];
-    let n = u32::from_be_bytes([hdr[1], hdr[2], hdr[3], hdr[4]]) as usize;
-    if n > MAX_REQ_CHUNK {
-        return Err(std::io::Error::new(ErrorKind::InvalidData, "请求帧超过上限"));
-    }
-    let mut buf = vec![0u8; n];
-    read_exact_deadline(r, &mut buf, deadline)?;
     Ok((t, buf))
 }
 
@@ -393,34 +362,6 @@ fn attest(fd: i32, lock: &Mutex<()>, spki: &[u8], nonce: &[u8]) -> Result<Vec<u8
     }
 }
 
-fn stream_request_body<R: Read, W: Write + ?Sized>(
-    parent: &mut R,
-    tls: &mut W,
-    total_len: u64,
-) -> Result<String, String> {
-    let deadline = Instant::now() + MAX_REQ_BODY_DURATION;
-    let mut hasher = Sha256::new();
-    let mut sent = 0u64;
-    while sent < total_len {
-        let (t, chunk) =
-            read_chunk_frame(parent, deadline).map_err(|e| format!("读 REQ_BODY_CHUNK: {}", e))?;
-        if t != REQ_BODY_CHUNK {
-            return Err(format!("期望 REQ_BODY_CHUNK，收到 {:#x}", t));
-        }
-        if chunk.is_empty() {
-            return Err("空 REQ_BODY_CHUNK".into());
-        }
-        sent += chunk.len() as u64;
-        if sent > total_len {
-            return Err("REQ_BODY_CHUNK 累计超过声明长度".into());
-        }
-        hasher.update(&chunk);
-        tls.write_all(&chunk)
-            .map_err(|e| format!("TLS 写请求体失败: {}", e))?;
-    }
-    Ok(hex(&hasher.finalize()))
-}
-
 fn handle(
     s: &mut VsockStream,
     sk: &SigningKey,
@@ -436,9 +377,15 @@ fn handle(
     let head: ReqHead =
         serde_json::from_slice(&head_buf).map_err(|e| format!("HEAD JSON: {}", e))?;
     drop(head_buf);
-    if head.request_body_len > MAX_REQ_BODY_TOTAL {
-        return Err("声明请求体超过上限".into());
+    let (t2, body) = read_frame(s, MAX_REQ_FRAME).map_err(|e| format!("读 BODY 帧: {}", e))?;
+    if t2 != REQ_BODY {
+        return Err(format!("期望 REQ_BODY，收到 {:#x}", t2));
     }
+    let req_body_hex = {
+        let mut hh = Sha256::new();
+        hh.update(&body);
+        hex(&hh.finalize())
+    };
     let nonce_bytes = B64
         .decode(head.nonce.as_bytes())
         .map_err(|e| format!("nonce base64: {}", e))?;
@@ -464,8 +411,8 @@ fn handle(
     let seed = head.tls_seed.as_deref().and_then(|s| B64.decode(s).ok());
     let sock = VsockStream::connect(&VsockAddr::new(PARENT_CID, head.egress_port))
         .map_err(|e| format!("连 vsock-proxy 失败: {}", e))?;
-    sock.set_read_timeout(Some(IO_TIMEOUT)).ok();
-    sock.set_write_timeout(Some(IO_TIMEOUT)).ok();
+    sock.set_read_timeout(Some(UPSTREAM_IO_TIMEOUT)).ok();
+    sock.set_write_timeout(Some(UPSTREAM_IO_TIMEOUT)).ok();
     let mut tls: Box<dyn ReadWrite> = match profile.as_ref().map(|p| p.stack) {
         Some(tls_profile::Stack::Boring) => Box::new(
             egress_boring::connect(profile.as_ref().unwrap(), sock, &head.upstream.host, seed.as_deref())
@@ -505,12 +452,13 @@ fn handle(
     if let Some(tok) = &head.token {
         req.push_str(&format!("authorization: Bearer {}\r\n", tok));
     }
-    req.push_str(&format!("content-length: {}\r\n", head.request_body_len));
+    req.push_str(&format!("content-length: {}\r\n", body.len()));
     req.push_str("connection: close\r\n\r\n");
 
     tls.write_all(req.as_bytes())
         .map_err(|e| format!("TLS 写请求头失败: {}", e))?;
-    let req_body_hex = stream_request_body(s, &mut *tls, head.request_body_len)?;
+    tls.write_all(&body)
+        .map_err(|e| format!("TLS 写请求体失败: {}", e))?;
     tls.flush().ok();
 
     let (head_bytes, leftover) = read_until_headers(&mut *tls)?;
@@ -670,8 +618,8 @@ fn worker(rx: Arc<Mutex<Receiver<VsockStream>>>, ctx: Arc<Ctx>) {
         bump_max(now, &ctx.m.in_flight_max);
         let start = Instant::now();
 
-        s.set_read_timeout(Some(IO_TIMEOUT)).ok();
-        s.set_write_timeout(Some(IO_TIMEOUT)).ok();
+        s.set_read_timeout(Some(CONTROL_IO_TIMEOUT)).ok();
+        s.set_write_timeout(Some(CONTROL_IO_TIMEOUT)).ok();
         let res = catch_unwind(AssertUnwindSafe(|| {
             handle(&mut s, &ctx.sk, &ctx.spki, ctx.nsm_fd, &ctx.nsm_lock, &ctx.m)
         }));
@@ -817,41 +765,6 @@ mod response_stream_tests {
 
         assert!(err.contains("content-length 响应提前 EOF"));
         assert_eq!(out, b"abc");
-    }
-
-    #[test]
-    fn request_body_streams_chunks_and_hashes() {
-        use super::{hex, stream_request_body, REQ_BODY_CHUNK};
-        use sha2::{Digest, Sha256};
-        let frame = |t: u8, data: &[u8]| {
-            let mut f = vec![t];
-            f.extend_from_slice(&(data.len() as u32).to_be_bytes());
-            f.extend_from_slice(data);
-            f
-        };
-        let mut input = Vec::new();
-        input.extend(frame(REQ_BODY_CHUNK, b"hello"));
-        input.extend(frame(REQ_BODY_CHUNK, b" world"));
-        let mut parent = Cursor::new(input);
-        let mut tls = Vec::<u8>::new();
-        let got = stream_request_body(&mut parent, &mut tls, 11).expect("stream ok");
-        assert_eq!(tls, b"hello world");
-        assert_eq!(got, hex(&Sha256::digest(b"hello world")));
-    }
-
-    #[test]
-    fn request_body_overshoot_is_rejected() {
-        use super::{stream_request_body, REQ_BODY_CHUNK};
-        let frame = |t: u8, data: &[u8]| {
-            let mut f = vec![t];
-            f.extend_from_slice(&(data.len() as u32).to_be_bytes());
-            f.extend_from_slice(data);
-            f
-        };
-        let mut parent = Cursor::new(frame(REQ_BODY_CHUNK, b"toolong"));
-        let mut tls = Vec::<u8>::new();
-        let err = stream_request_body(&mut parent, &mut tls, 3).expect_err("overshoot must fail");
-        assert!(err.contains("超过声明长度"));
     }
 
     #[test]
