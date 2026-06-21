@@ -51,7 +51,15 @@
 
 整个方案的承重墙是：客户端比对的 PCR0 必须能从公开源代码**独立复算**，而不是运营方单方面声称的数字。
 enclave 的完整受度量 TCB 位于 [`enclave/`](enclave)；在固定工具链下双构会得到**逐字节一致**的 PCR0。
-见 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md)。
+
+**当前发布版的规范 PCR0：**
+
+```
+23696aa5aa2c2dbacfe6dc48c21e67400dd2571f7105c359dd072d3ae14cfac10bfe8509ae7e3db2a078d630d81efec7
+```
+
+这是你比对的目标值 —— 但**别只信这个数**：自己复现它（见下文「复现 PCR0」），再和运行中 enclave 的
+attestation 比对。完整流程见 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md)。
 
 ## 协议规范
 
@@ -72,14 +80,17 @@ enclave 的完整受度量 TCB 位于 [`enclave/`](enclave)；在固定工具链
 
 ## 验证一条响应
 
-流式响应末尾会带一条 `event: tee.proof`。保存完整流，然后运行：
+流式响应末尾会带一条 `event: tee.proof`;非流式 proof mode 可保存完整
+`multipart/mixed` 响应(第一段是 raw response bytes,第二段是 proof)。如果终端保存到的是
+raw response body 后面直接接 proof part 和 closing boundary,也可以直接验证。保存响应材料后运行：
 
 ```bash
 # CLI
-npx tsx verifier/tee-verify-stream.ts captured.sse --pcr0 <canonical-PCR0>
+npx tsx verifier/tee-verify-stream.ts captured-response --pcr0 <canonical-PCR0>
 ```
 
-也可以在浏览器中打开 [`docs/tee-verify.html`](docs/tee-verify.html)，粘贴完整响应流；
+也可以在浏览器中打开 [`docs/tee-verify.html`](docs/tee-verify.html)，粘贴流式 SSE 或非流式 proof 响应；
+终端保存的 body+proof 尾段也兼容。
 验证完全在你的机器上完成。完整 walkthrough 见 [`docs/TEE.md` §3](docs/TEE.md)。
 
 ## 复现 PCR0

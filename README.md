@@ -56,7 +56,17 @@ unable to *read* the traffic, this does not cover it. See [`docs/TEE.md` §2](do
 The whole scheme rests on one thing: the PCR0 a client compares against must be **independently
 recomputable from public source** — not a number the operator asserts. The enclave's entire
 measured TCB lives in [`enclave/`](enclave); built twice with a pinned toolchain it yields a
-**byte-identical** PCR0. See [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
+**byte-identical** PCR0.
+
+**Canonical PCR0** of the current release:
+
+```
+23696aa5aa2c2dbacfe6dc48c21e67400dd2571f7105c359dd072d3ae14cfac10bfe8509ae7e3db2a078d630d81efec7
+```
+
+This is the value to compare against — but **don't take it on trust**: reproduce it yourself
+(*Reproduce the PCR0*, below) and check it against a running enclave's attestation. Full
+procedure: [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
 
 ## Specification
 
@@ -79,14 +89,17 @@ and the code is one conforming implementation of it.
 
 ## Verify a response
 
-A streamed response carries a trailing `event: tee.proof`. Save the whole stream, then:
+A streamed response carries a trailing `event: tee.proof`; non-streaming proof mode can be
+captured as a `multipart/mixed` body whose first part is the raw response bytes and second
+part is the proof. Terminal captures that contain the raw response body followed by the
+proof part and closing boundary are accepted too. Save the response capture, then:
 
 ```bash
 # CLI
-npx tsx verifier/tee-verify-stream.ts captured.sse --pcr0 <canonical-PCR0>
+npx tsx verifier/tee-verify-stream.ts captured-response --pcr0 <canonical-PCR0>
 ```
 
-…or open [`docs/tee-verify.html`](docs/tee-verify.html) in a browser and paste the stream — it
+…or open [`docs/tee-verify.html`](docs/tee-verify.html) in a browser and paste the capture — it
 verifies entirely on your machine. Full walkthrough: [`docs/TEE.md` §3](docs/TEE.md).
 
 ## Reproduce the PCR0
