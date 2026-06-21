@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TEE + 签名 · 中转自证原理演示</title>
+<style>
+  :root{
+    --bg:#f5f7fb; --panel:#ffffff; --panel2:#eef2f8; --line:#dde3ec;
+    --txt:#1b2532; --dim:#56657a; --faint:#8b97a6;
+    --ok:#0f9d6b; --bad:#e23744; --warn:#b3781a; --accent:#2f6fdb;
+    --enclave:#6a45e6; --signed:#6a45e6; --host:#7a8694; --user:#0f9d6b; --openai:#10a37f;
+    --mono:'SF Mono',ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft Yahei',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--sans);line-height:1.6}
+  body{max-width:1080px;margin:0 auto;padding:32px 24px 120px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:.2px;padding-right:120px}
+  h2{font-size:15px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);margin:0 0 14px;font-weight:700}
+  .sub{color:var(--dim);font-size:15px;margin:0 0 8px}
+  section{margin-top:52px}
+  .quote{font-size:20px;font-weight:600;line-height:1.5;border-left:3px solid var(--accent);padding:6px 0 6px 18px;margin:18px 0}
+  .quote .hl{color:var(--accent)}
+  code,.mono{font-family:var(--mono)}
+
+  /* language toggle */
+  .langtoggle{position:fixed;top:14px;right:16px;z-index:60;display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel);box-shadow:0 1px 3px rgba(16,24,40,.08)}
+  .lt{font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;border:none;background:transparent;color:var(--dim);padding:6px 13px}
+  .lt.active{background:var(--accent);color:#fff}
+
+  /* fact cards */
+  .facts{display:grid;grid-template-columns:1fr 1fr;gap:18px;position:relative}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .card .tag{display:inline-block;font-size:12px;font-weight:700;letter-spacing:1px;padding:3px 10px;border-radius:20px;margin-bottom:12px}
+  .card.sig .tag{background:rgba(47,111,219,.12);color:var(--accent)}
+  .card.att .tag{background:rgba(106,69,230,.13);color:var(--signed)}
+  .card h3{margin:0 0 12px;font-size:18px}
+  .proves{font-size:14px;margin:6px 0;padding-left:24px;position:relative}
+  .proves::before{position:absolute;left:0;top:0;font-size:15px}
+  .proves.y::before{content:"✓";color:var(--ok)}
+  .proves.n::before{content:"✕";color:var(--bad)}
+  .proves .lbl{color:var(--faint)}
+  .link-note{grid-column:1/3;text-align:center;color:var(--dim);font-size:13.5px;margin-top:2px}
+  .link-note b{color:var(--signed)}
+
+  /* simulator */
+  .sim{background:var(--panel2);border:1px solid var(--line);border-radius:16px;padding:0;overflow:hidden;position:relative;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .sim-grid{display:grid;grid-template-columns:230px 1fr 250px}
+  @media(max-width:900px){.sim-grid{grid-template-columns:1fr}.facts{grid-template-columns:1fr}.link-note{grid-column:1}}
+  .col{padding:20px}
+  .col.attacker{background:rgba(226,55,68,.045);border-right:1px solid var(--line)}
+  .col.verify{background:rgba(15,157,107,.045);border-left:1px solid var(--line)}
+  .col-title{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);margin:0 0 4px;font-weight:700}
+  .col-sub{font-size:12.5px;color:var(--faint);margin:0 0 16px}
+
+  .atk{display:block;width:100%;text-align:left;background:#f3f6fb;border:1px solid #dbe2ec;color:var(--txt);
+       padding:12px 14px;border-radius:10px;margin-bottom:10px;cursor:pointer;font-size:13.5px;transition:.15s;font-family:inherit}
+  .atk:hover{border-color:var(--bad);background:#fcedef}
+  .atk.active{border-color:var(--bad);background:rgba(226,55,68,.1);box-shadow:0 0 0 1px var(--bad) inset}
+  .atk .t{font-weight:600;display:block;margin-bottom:2px}
+  .atk .d{color:var(--faint);font-size:11.5px;line-height:1.4}
+  .atk.reset{border-color:#cfe8db}
+  .atk.reset:hover{border-color:var(--ok);background:#eafaf2}
+  .atk.reset.active{border-color:var(--ok);background:rgba(15,157,107,.1);box-shadow:0 0 0 1px var(--ok) inset}
+
+  /* stage: the boxes */
+  .stage{display:flex;flex-direction:column;gap:2px;align-items:stretch;justify-content:center;min-height:420px;position:relative}
+  /* two-lane directional connectors: left=request(down), right=response(up) */
+  .conn{position:relative;height:44px}
+  .lane{position:absolute;top:4px;bottom:4px;width:3px;color:var(--faint)}
+  .lane.down{left:calc(50% - 11px)} .lane.up{left:calc(50% + 11px)}
+  .lane .ltrack{position:absolute;inset:0;background:var(--line);border-radius:2px}
+  .lane .lflow{position:absolute;inset:0;border-radius:2px;opacity:0;background:repeating-linear-gradient(180deg,currentColor 0 6px,transparent 6px 15px)}
+  .lane.active .lflow{opacity:1}
+  .lane.down.active .lflow{animation:flowdown .8s linear infinite}
+  .lane.up.active .lflow{animation:flowup .8s linear infinite}
+  .lane.done .lflow{opacity:.55;background:currentColor;animation:none}
+  @keyframes flowdown{to{background-position:0 15px}}
+  @keyframes flowup{to{background-position:0 -15px}}
+  .lane .lhead{position:absolute;left:50%;transform:translateX(-50%);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;opacity:.45}
+  .lane.down .lhead{bottom:-3px;border-top:8px solid currentColor}
+  .lane.up .lhead{top:-3px;border-bottom:8px solid currentColor}
+  .lane.active .lhead,.lane.done .lhead{opacity:1}
+  .lane.req{color:var(--user)} .lane.cipher{color:var(--warn)} .lane.signed{color:var(--signed)} .lane.bad{color:var(--bad)}
+  .conn .cl{position:absolute;top:50%;left:calc(50% + 26px);transform:translateY(-50%);font-size:11.5px;font-weight:700;white-space:nowrap;opacity:0;transition:opacity .15s}
+  .conn.show-cl .cl{opacity:1}
+  .conn.req .cl{color:var(--user)} .conn.cipher .cl{color:var(--warn)} .conn.signed .cl{color:var(--signed)} .conn.bad .cl{color:var(--bad)}
+  .conn .note{position:absolute;top:50%;right:calc(50% + 26px);transform:translateY(-50%);font-size:10.5px;color:var(--faint);white-space:nowrap}
+  .lanekey{text-align:center;font-size:11px;color:var(--faint);letter-spacing:.3px;margin-bottom:4px}
+  .lanekey b{font-weight:700}
+  @keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(106,69,230,0)}50%{box-shadow:0 0 0 4px rgba(106,69,230,.4)}}
+  @keyframes redglow{0%,100%{box-shadow:0 0 0 0 rgba(226,55,68,0)}50%{box-shadow:0 0 0 4px rgba(226,55,68,.45)}}
+  @keyframes hitk{0%,100%{box-shadow:0 0 0 0 rgba(47,111,219,0)}50%{box-shadow:0 0 0 5px rgba(47,111,219,.3)}}
+  @keyframes bpulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05);background:rgba(255,200,87,.3)}}
+  .node.fx-sign{animation:glow .5s ease 2}
+  .node.fx-bad{animation:redglow .45s ease 3}
+  .node.fx-hit{animation:hitk .45s ease 1}
+  .blockmark.pulse{animation:bpulse .5s ease 3}
+  .node{border:1.5px solid var(--line);border-radius:12px;padding:13px 15px;background:var(--panel);position:relative;transition:.25s}
+  .node .nh{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;margin-bottom:6px}
+  .node .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+  .node .meta{font-size:12px;color:var(--dim);line-height:1.55}
+  .node.user .dot{background:var(--user)} .node.user{border-color:rgba(15,157,107,.4)}
+  .node.host .dot{background:var(--host)}
+  .node.enclave .dot{background:var(--enclave)} .node.enclave{border-color:rgba(106,69,230,.45);background:linear-gradient(180deg,rgba(106,69,230,.06),transparent)}
+  .node.openai .dot{background:var(--openai)} .node.openai{border-color:rgba(16,163,127,.4)}
+  .node.tampered{border-color:var(--bad)!important;background:rgba(226,55,68,.07)!important}
+  .node.attempting{border-color:var(--warn)!important;background:rgba(255,200,87,.12)!important}
+  .blockmark{margin:2px auto -2px;max-width:88%;font-size:11.5px;color:#8a5a00;background:#fff6e6;border:1px dashed #e6c47a;border-radius:7px;padding:6px 10px;text-align:center;display:none}
+  .blockmark.show{display:block}
+  .node .badge{position:absolute;top:11px;right:13px;font-size:11px;font-weight:700;letter-spacing:.3px}
+  .kv{font-family:var(--mono);font-size:11.5px}
+  .kv .k{color:var(--faint)} .kv .v{color:var(--txt)}
+  .kv .v.changed{color:var(--bad);font-weight:700}
+  .arrow{text-align:center;color:var(--faint);font-size:13px;font-family:var(--mono);margin:-6px 0}
+  .arrow .pipe{color:var(--warn)}
+  .cipher{font-family:var(--mono);font-size:11px;color:var(--warn);letter-spacing:1px}
+  .sealed{display:inline-block;font-size:11px;color:var(--enclave);border:1px solid rgba(106,69,230,.4);border-radius:5px;padding:1px 7px;margin-left:6px}
+
+  /* verify panel */
+  .check{border:1px solid var(--line);border-radius:10px;padding:12px 13px;margin-bottom:11px;background:var(--panel);transition:.2s}
+  .check .ch-top{display:flex;align-items:center;gap:9px;font-weight:600;font-size:13.5px}
+  .check .ico{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;background:#e7ecf3;color:var(--faint)}
+  .check .res{font-size:12px;color:var(--dim);margin-top:7px;line-height:1.5}
+  .check.pass{border-color:rgba(15,157,107,.45);background:rgba(15,157,107,.07)}
+  .check.pass .ico{background:var(--ok);color:#ffffff}
+  .check.fail{border-color:rgba(226,55,68,.5);background:rgba(226,55,68,.07)}
+  .check.fail .ico{background:var(--bad);color:#ffffff}
+  .check.pass .res{color:#0c7a52} .check.fail .res{color:#b3242f}
+  .check.blocked{border-color:rgba(179,120,26,.5);background:rgba(255,200,87,.16)}
+  .check.blocked .ico{background:var(--warn);color:#ffffff}
+  .check.blocked .res{color:#8a5a00}
+  .verdict{margin-top:16px;padding:13px;border-radius:10px;text-align:center;font-weight:700;font-size:14px;background:#eef2f7;color:var(--dim);border:1px solid var(--line)}
+  .verdict.ok{background:rgba(15,157,107,.12);color:var(--ok);border:1px solid rgba(15,157,107,.4)}
+  .verdict.no{background:rgba(226,55,68,.1);color:var(--bad);border:1px solid rgba(226,55,68,.4)}
+
+  .explain{margin:18px 20px 22px;padding:14px 16px;background:#f7f9fc;border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:8px;font-size:13.5px;color:var(--dim);min-height:24px}
+  .explain b{color:var(--txt)}
+
+  /* steps + limits */
+  .steps{counter-reset:s;display:grid;gap:12px}
+  .step{display:flex;gap:14px;align-items:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .step .n{counter-increment:s;flex-shrink:0;width:26px;height:26px;border-radius:50%;background:rgba(47,111,219,.13);color:var(--accent);font-weight:700;display:flex;align-items:center;justify-content:center;font-size:13px}
+  .step .n::before{content:counter(s)}
+  .step .stx{font-size:14px}.step .stx b{color:var(--txt)} .step .stx span{color:var(--dim)}
+  .limits{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.limits{grid-template-columns:1fr}}
+  .limit{background:rgba(255,200,87,.1);border:1px solid rgba(179,120,26,.3);border-radius:12px;padding:16px}
+  .limit h4{margin:0 0 8px;color:var(--warn);font-size:15px}
+  .limit p{margin:0;font-size:13.5px;color:var(--dim)}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-top:14px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  /* attestation modal */
+  .att-open{margin-left:8px;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;border:1px solid rgba(106,69,230,.5);background:rgba(106,69,230,.1);color:var(--signed);border-radius:20px;padding:2px 9px}
+  .att-open:hover{background:rgba(106,69,230,.2)}
+  .modal{position:fixed;inset:0;background:rgba(20,28,40,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:24px}
+  .modal.show{display:flex}
+  .modal-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;max-width:580px;width:100%;padding:24px;position:relative;max-height:92vh;overflow:auto;box-shadow:0 12px 40px rgba(16,24,40,.18)}
+  .modal-card h3{margin:0 0 4px;font-size:19px}
+  .modal-card .msub{color:var(--dim);font-size:13px;margin:0 0 18px;line-height:1.6}
+  .modal-close{position:absolute;top:13px;right:15px;cursor:pointer;color:var(--faint);font-size:20px;background:none;border:none}
+  .chain-card{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--panel2)}
+  .chain-card.root{border-color:rgba(47,111,219,.45);background:rgba(47,111,219,.06)}
+  .chain-card.att{border-color:rgba(106,69,230,.45);background:rgba(106,69,230,.06)}
+  .chain-card.resp{border-color:rgba(15,157,107,.4);background:rgba(15,157,107,.05)}
+  .chain-card .ct{font-weight:700;font-size:14px;margin-bottom:4px}
+  .chain-card .cd{font-size:12.5px;color:var(--dim)}
+  .chain-field{font-family:var(--mono);font-size:12px;margin:7px 0;padding:7px 9px;background:#f4f6fb;border-radius:6px;border:1px solid var(--line)}
+  .chain-field .fk{color:var(--faint)}
+  .chain-field .fixed{color:var(--accent)} .chain-field .rand{color:var(--signed);border-radius:3px;transition:background .6s}
+  .chain-field .note{display:block;font-family:var(--sans);font-size:11px;color:var(--faint);margin-top:3px}
+  .chain-field .note b{color:var(--txt)}
+  .chain-arrow{text-align:center;color:var(--faint);font-size:12px;margin:8px 0}
+  .chain-arrow b{color:var(--txt)}
+  .att-verdict{margin-top:16px;text-align:center;font-weight:700;color:var(--ok);background:rgba(15,157,107,.12);border:1px solid rgba(15,157,107,.4);border-radius:9px;padding:11px}
+  .att-actions{margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .att-btn{font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--enclave);background:rgba(106,69,230,.12);color:var(--signed);border-radius:9px;padding:8px 13px}
+  .att-btn:hover{background:rgba(106,69,230,.22)}
+  .att-note{font-size:12.5px;color:var(--ok)}
+  .pin{display:inline-block;font-size:10.5px;font-weight:700;color:var(--accent);border:1px solid rgba(47,111,219,.5);border-radius:5px;padding:1px 6px;margin-left:6px}
+  footer{margin-top:60px;color:var(--faint);font-size:12px;text-align:center;border-top:1px solid var(--line);padding-top:20px}
+</style>
+</head>
+<body>
+
+<div class="langtoggle">
+  <button class="lt active" id="lang-zh">中文</button>
+  <button class="lt" id="lang-en">EN</button>
+</div>
+
+<h1 data-i18n="h1">中转站「不必信任运营方」的自证原理</h1>
+<p class="sub" data-i18n="sub1">TEE 远程证明 + 响应签名 · 交互演示</p>
+<div class="quote" data-i18n="quote">整套机制只回答一个问题：<br>如何<span class="hl">信任中转的输出</span>，却<span class="hl">不必信任运营方这个人</span>？</div>
+
+<!-- ===== 两个支柱 ===== -->
+<section>
+  <h2 data-i18n="h2_facts">它靠两个独立的支柱，缺一不可</h2>
+  <div class="facts">
+    <div class="card sig">
+      <span class="tag" data-i18n="tagA">支柱 A · 签名</span>
+      <h3 data-i18n="h3A">证明「这次交换没被改」</h3>
+      <div class="proves y" data-i18n="A1">TEE 用内部私钥签一份<b>字段分解声明</b>：<code>上游域名 / 路径 / 方法 / 状态 + 请求体哈希 + 响应体哈希</code></div>
+      <div class="proves y" data-i18n="A2">验签通过 = 这条响应、连同它<b>声称</b>调的上游，一字未改、全出自 TEE</div>
+      <div class="proves n" data-i18n="A3"><span class="lbl">证明不了：</span>「声称调的上游」是否属实——那只是 TEE 的<b>自述</b>，可信全靠支柱 B 背书</div>
+    </div>
+    <div class="card att">
+      <span class="tag" data-i18n="tagB">支柱 B · 远程证明</span>
+      <h3 data-i18n="h3B">证明「跑的是哪段代码」</h3>
+      <div class="proves y" data-i18n="B1">CPU 出具报告：受保护区内代码哈希 = <code>PCR0</code>，由 TEE (AWS) 签名</div>
+      <div class="proves y" data-i18n="B2">用户对比 PCR0 = <b>自己复现构建</b>审计源码得到的度量值，而源码写死「只调官方」</div>
+      <div class="proves n" data-i18n="B3"><span class="lbl">证明不了：</span>这个响应是不是真走了这个 TEE——靠支柱 A 背书</div>
+    </div>
+    <div class="link-note" data-i18n="linknote">↑ 扣合点：<b>支柱 A 的签名公钥，被塞进支柱 B 的证明报告里一起被 TEE (AWS) 签名</b> → 两条链焊成一条</div>
+  </div>
+</section>
+
+<!-- ===== 攻击模拟器 ===== -->
+<section>
+  <h2 data-i18n="h2_sim">攻击模拟器 · 你来当恶意运营方</h2>
+  <p class="sub" data-i18n="sim_sub">点左边的攻击按钮，看右边用户的验证会不会当场识破。</p>
+  <div class="sim">
+    <div class="sim-grid">
+      <!-- attacker -->
+      <div class="col attacker">
+        <p class="col-title" data-i18n="atk_title">😈 你的攻击手段</p>
+        <p class="col-sub" data-i18n="atk_sub">你控制中转服务器和部署，想偷工减料</p>
+        <button class="atk reset active" data-atk="honest">
+          <span class="t" data-i18n="a_honest_t">😇 老实运营</span><span class="d" data-i18n="a_honest_d">如实跑审计代码、调官方、不改任何东西</span>
+        </button>
+        <button class="atk" data-atk="code">
+          <span class="t" data-i18n="a_code_t">① 偷换代码 → 调便宜模型</span><span class="d" data-i18n="a_code_d">把 TEE 里的代码换成调廉价模型再返回</span>
+        </button>
+        <button class="atk" data-atk="resp">
+          <span class="t" data-i18n="a_resp_t">② 中途篡改响应</span><span class="d" data-i18n="a_resp_d">TEE 出来后，在中转服务器上偷改返回内容</span>
+        </button>
+        <button class="atk" data-atk="traffic">
+          <span class="t" data-i18n="a_traffic_t">③ 中转服务器偷看/改 OpenAI 流量</span><span class="d" data-i18n="a_traffic_d">在转发那段拦截、解密、伪造官方响应</span>
+        </button>
+        <button class="atk" data-atk="ownkey">
+          <span class="t" data-i18n="a_ownkey_t">④ 用我自己的密钥签假货</span><span class="d" data-i18n="a_ownkey_d">自造一对密钥，绕开 TEE，自己当签名人签个便宜货</span>
+        </button>
+      </div>
+
+      <!-- stage -->
+      <div class="col">
+        <div class="stage">
+          <div class="lanekey" data-i18n="lanekey"><b style="color:var(--user)">▼ 左道 = 请求下行</b>　　<b style="color:var(--signed)">▲ 右道 = 响应上行</b></div>
+          <div class="node user" id="n-user">
+            <div class="nh"><span class="dot"></span><span data-i18n="user_h">用户</span></div>
+            <div class="meta" data-i18n="user_meta">发出请求，最后用<b>公钥</b>验证收到的东西</div>
+          </div>
+          <div class="conn" id="conn-uh"><div class="lane down"><div class="ltrack"></div><div class="lflow"></div><div class="lhead"></div></div><div class="lane up"><div class="ltrack"></div><div class="lflow"></div><div class="lhead"></div></div><div class="cl"></div><div class="note" data-i18n="net_public">公网</div></div>
+          <div class="node host" id="n-host">
+            <div class="nh"><span class="dot"></span><span data-i18n="host_h">中转服务器 <span style="color:var(--faint);font-weight:400">（不可信）</span></span></div>
+            <div class="meta" id="host-meta">只搬运 <span class="cipher">密文 9f2a··c4</span>，看不懂、改不了</div>
+            <div class="badge" id="host-badge"></div>
+          </div>
+          <div class="conn" id="conn-he"><div class="lane down"><div class="ltrack"></div><div class="lflow"></div><div class="lhead"></div></div><div class="lane up"><div class="ltrack"></div><div class="lflow"></div><div class="lhead"></div></div><div class="cl"></div><div class="note">vsock</div></div>
+          <div class="node enclave" id="n-enclave">
+            <div class="nh"><span class="dot"></span><span data-i18n="enc_h">TEE <span class="sealed">已远程证明</span></span><button class="att-open" id="att-open" data-i18n="att_open">🔑 随机密钥怎么被信任？</button></div>
+            <div class="meta kv">
+              <span class="k" data-i18n="kv_pcr">运行代码 PCR0 = </span><span class="v" id="pcr">a3f9·71e0·审计源码</span><br>
+              <span class="k" data-i18n="kv_act">出口动作 = </span><span class="v" id="enc-act">调 api.openai.com → 签名</span>
+            </div>
+            <div class="badge" id="enc-badge"></div>
+          </div>
+          <div class="conn" id="conn-eo"><div class="lane down"><div class="ltrack"></div><div class="lflow"></div><div class="lhead"></div></div><div class="lane up"><div class="ltrack"></div><div class="lflow"></div><div class="lhead"></div></div><div class="cl"></div><div class="note">TLS</div></div>
+          <div class="blockmark" id="blockmark"></div>
+          <div class="node openai" id="n-openai">
+            <div class="nh"><span class="dot"></span>api.openai.com</div>
+            <div class="meta" id="openai-meta">官方模型，正品响应</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- verify -->
+      <div class="col verify">
+        <p class="col-title" data-i18n="v_title">🔍 用户端验证</p>
+        <p class="col-sub" data-i18n="v_sub">收到 响应+签名+证明 后自动跑三步</p>
+        <div class="check" id="c-att">
+          <div class="ch-top"><span class="ico">B</span><span data-i18n="c_att">远程证明 · 对 PCR0</span></div>
+          <div class="res" id="r-att">PCR0 = 审计哈希 ✓</div>
+        </div>
+        <div class="check" id="c-sig">
+          <div class="ch-top"><span class="ico">A</span><span data-i18n="c_sig">签名 · 验完整性</span></div>
+          <div class="res" id="r-sig">签名与数据一致 ✓</div>
+        </div>
+        <div class="check" id="c-tls">
+          <div class="ch-top"><span class="ico">🔒</span><span data-i18n="c_tls">TLS · 在 TEE 内终结</span></div>
+          <div class="res" id="r-tls">官方证书校验通过 ✓</div>
+        </div>
+        <div class="verdict ok" id="verdict">✅ 不是黑箱 · 可信</div>
+      </div>
+    </div>
+    <div class="explain" id="explain"><b>老实运营：</b>三道检查全过。你这个人无需被信任——信任降到 <b>TEE (AWS) 硬件 + 可复现的公开代码</b>，其余全是密码学推导出来的。</div>
+  </div>
+  <div class="legend">
+    <span data-i18n="leg_user"><i style="background:var(--user)"></i>用户</span>
+    <span data-i18n="leg_host"><i style="background:var(--host)"></i>中转服务器（不可信，可捣乱但偷不了换不了）</span>
+    <span data-i18n="leg_enc"><i style="background:var(--enclave)"></i>TEE（可信，已证明）</span>
+    <span data-i18n="leg_openai"><i style="background:var(--openai)"></i>OpenAI</span>
+  </div>
+</section>
+
+<!-- ===== 验证三步 ===== -->
+<section>
+  <h2 data-i18n="h2_steps">用户端到底验了哪三步</h2>
+  <div class="steps">
+    <div class="step"><div class="n"></div><div class="stx" data-i18n="step1"><b>验证明报告的签名</b> <span>→ 一路链到 TEE (AWS Nitro) 根证书（公开），确认「这是一个真 TEE」。</span></div></div>
+    <div class="step"><div class="n"></div><div class="stx" data-i18n="step2"><b>比对 PCR0</b> <span>→ 等于<b>自己复现构建</b>审计源码得到的度量值，确认「里面跑的是会调官方的那段代码」。</span></div></div>
+    <div class="step"><div class="n"></div><div class="stx" data-i18n="step3"><b>用报告里的公钥验响应签名</b> <span>→ 确认「这段响应确实出自那个 TEE、传输途中没被改」。</span></div></div>
+  </div>
+  <p class="sub" style="margin-top:16px" data-i18n="steps_note">↑ 第 2 步成立有个<b style="color:var(--txt)">一次性前提</b>：用户得能把公开源码<b style="color:var(--txt)">复现构建</b>出同一个 PCR0——这是「PCR0 ↔ 审计源码」之间唯一的桥。否则 PCR0 只是个对不上任何东西的哈希。这一步与请求无关，验一次即可，做法见 <code>tee-reproducible-build.md</code>。</p>
+</section>
+
+<!-- ===== 硬限制 ===== -->
+<section>
+  <h2 data-i18n="h2_limits">两个必须认的硬限制（不夸大）</h2>
+  <div class="limits">
+    <div class="limit"><h4 data-i18n="lim1_h">信任根落在 TEE (AWS)</h4><p data-i18n="lim1_p">证明报告由 TEE (AWS) 签发。这不是区块链那种纯数学，而是「信任 TEE (AWS) 这家厂 + 没有 TEE 漏洞」。它把信任从「运营方」搬到了「芯片/云厂商」，没有彻底消灭信任。</p></div>
+    <div class="limit"><h4 data-i18n="lim2_h">OpenAI 端只能「观测」</h4><p data-i18n="lim2_p">OpenAI 不对自己的响应签名。所以「官方真的诚实产出」这件事，最强只能到「TEE 通过真 TLS 观测到了它」，到不了纯数学证明。这是此路线的天花板。</p></div>
+  </div>
+</section>
+
+<div class="modal" id="att-modal">
+  <div class="modal-card">
+    <button class="modal-close" onclick="closeAtt()">✕</button>
+    <h3 data-i18n="m_title">随机密钥，怎么被信任？</h3>
+    <p class="msub" data-i18n="m_sub1">TEE 每次开机<b>随机</b>生成签名密钥。用户从不预先知道这把公钥——它被 TEE (AWS) 签名的 attestation <b>当场认证</b>，和 HTTPS 证书一模一样。用户事先固定知道的只有两样：<b style="color:var(--accent)">TEE (AWS) 根证书</b> 和 <b style="color:var(--accent)">你公开的 PCR0</b>。</p>
+
+    <div class="chain-card root">
+      <div class="ct" data-i18n="chain_root_ct">① TEE (AWS Nitro) 根证书 <span class="pin">用户事先就信任 · 固定</span></div>
+      <div class="cd" data-i18n="chain_root_cd">TEE (AWS) 公开发布的根。整条链唯一的信任锚——不是那把随机公钥。</div>
+    </div>
+    <div class="chain-arrow" data-i18n="chain_arrow1">↓ 用 TEE (AWS) 密钥 <b>签名</b></div>
+    <div class="chain-card att">
+      <div class="ct" data-i18n="chain_att_ct">② attestation 文档（硬件签发）</div>
+      <div class="chain-field"><span class="fk">PCR0 =</span> <span class="fixed" id="att-pcr" data-i18n="att_pcr_v">a3f9·71e0·审计源码</span><span class="note" data-i18n="att_pcr_n">用户比对：= 我<b>复现构建</b>审计源码得到的度量值 ✓（<b>固定</b>）</span></div>
+      <div class="chain-field"><span class="fk">public_key =</span> <span class="rand" id="att-pk">pk_8f3a·c7d1</span><span class="note" data-i18n="att_pk_n">本次开机 <b>随机</b> 生成 ← 你疑惑的那把</span></div>
+      <div class="chain-field"><span class="fk">nonce =</span> <span id="att-nonce" data-i18n="att_nonce_v">本次交换的 nonce</span><span class="note" data-i18n="att_nonce_n">每次交换由中转生成，<b>同时绑进这份 attestation 和响应签名</b> → 锁死「这份证明属于这一次交换、这把 pk、这条响应」。配合<b>短时有效证书</b>防重放——旧文档/别的 TEE 冒充不了。<b>不是</b>用户的挑战值。</span></div>
+    </div>
+    <div class="chain-arrow" data-i18n="chain_arrow2">↓ 用这把 <b>随机 pk</b> 签名</div>
+    <div class="chain-card resp">
+      <div class="ct" data-i18n="chain_resp_ct">③ 本次响应 + 签名</div>
+      <div class="cd" data-i18n="chain_resp_cd">用户用②里取出的 pk 验签 → 通过。</div>
+    </div>
+
+    <div class="att-verdict" data-i18n="att_verdict">✅ pk 是随机的，但被 TEE (AWS) + PCR0 当场认证 → 可信</div>
+
+    <div class="att-actions">
+      <button class="att-btn" onclick="restartEnclave()" data-i18n="att_btn">🔄 重启 TEE（重新随机生成密钥）</button>
+      <span class="att-note" id="att-restart-note"></span>
+    </div>
+    <p class="msub" style="margin:14px 0 0" data-i18n="m_sub2">就像 HTTPS：你不预先知道网站的公钥，但 CA（你信的根）签的证书把它认证了；服务器重启换了密钥也照样验得过。这里 <b>TEE (AWS) = CA</b>，<b>attestation = 证书</b>，<b>PCR0 = 身份</b>，<b>随机 pk = 被签发的公钥</b>。</p>
+  </div>
+</div>
+
+<footer data-i18n="footer">单文件演示 · 纯前端模拟，哈希/密文为示意数据，不含真实加密运算</footer>
+
+<script>
+// ---------- i18n ----------
+// Pick language: an explicit saved choice wins; otherwise follow the browser
+// (Chinese UI → zh, everything else → en).
+function detectLang(){
+  const tags = (navigator.languages && navigator.languages.length)
+    ? navigator.languages : [navigator.language || ''];
+  return tags.some(t => /^zh\b/i.test(t)) ? 'zh' : 'en';
+}
+let LANG = detectLang();
+try { const saved = localStorage.getItem('poo-lang'); if (saved === 'en' || saved === 'zh') LANG = saved; } catch(e){}
+let curKey = 'honest';
+const TX = (zh, en) => ({ zh, en });
+const pick = x => x[LANG];
+const L = (zh, en) => LANG === 'en' ? en : zh;
+
+// English overrides for every [data-i18n] node (zh stays inline as the source of truth)
+const EN = {
+  h1: `How a relay proves itself — so you needn't trust its operator`,
+  sub1: `TEE remote attestation + response signing · interactive demo`,
+  quote: `The whole mechanism answers one question:<br>how can you <span class="hl">trust a relay's output</span> without having to <span class="hl">trust the operator as a person</span>?`,
+  h2_facts: `It rests on two independent pillars — neither alone is enough`,
+  tagA: `Pillar A · Signature`,
+  h3A: `Proves "this exchange wasn't altered"`,
+  A1: `The TEE signs a <b>field-decomposed statement</b> with its internal private key: <code>upstream relay server / path / method / status + request-body hash + response-body hash</code>`,
+  A2: `A valid signature = this response, together with the upstream it <b>claims</b> to have called, is byte-for-byte unaltered and came from the TEE`,
+  A3: `<span class="lbl">Can't prove:</span> whether the "claimed upstream" is true — that's only the TEE's <b>self-assertion</b>, trustworthy solely because Pillar B backs it`,
+  tagB: `Pillar B · Remote attestation`,
+  h3B: `Proves "which code is running"`,
+  B1: `The CPU issues a report: the hash of the code inside the protected TEE = <code>PCR0</code>, signed by TEE (AWS)`,
+  B2: `The user checks PCR0 = the measurement they get by <b>reproducibly building</b> the audited source themselves — and that source hard-codes "only call the official API"`,
+  B3: `<span class="lbl">Can't prove:</span> whether this particular response really went through this TEE — backed by Pillar A`,
+  linknote: `↑ The binding: <b>Pillar A's signing public key is embedded inside Pillar B's attestation report and signed by TEE (AWS) along with it</b> → the two chains are welded into one`,
+  h2_sim: `Attack simulator · you play the malicious operator`,
+  sim_sub: `Click an attack on the left; watch whether the user's verification on the right catches it on the spot.`,
+  atk_title: `😈 Your attack options`,
+  atk_sub: `You control the relay server machine and the deployment, and you want to cut corners`,
+  a_honest_t: `😇 Run honestly`,
+  a_honest_d: `Run the audited code faithfully, call the official API, change nothing`,
+  a_code_t: `① Swap the code → call a cheap model`,
+  a_code_d: `Replace the code inside the TEE with one that calls a cheap model and returns that`,
+  a_resp_t: `② Tamper with the response in transit`,
+  a_resp_d: `After it leaves the TEE, secretly edit the returned content on the relay server`,
+  a_traffic_t: `③ Host snoops/alters the OpenAI traffic`,
+  a_traffic_d: `Intercept, decrypt and forge the official response on the forwarding hop`,
+  a_ownkey_t: `④ Sign fakes with my own key`,
+  a_ownkey_d: `Generate my own keypair, bypass the TEE, and sign a cheap response as the signer myself`,
+  lanekey: `<b style="color:var(--user)">▼ left lane = request (down)</b>　　<b style="color:var(--signed)">▲ right lane = response (up)</b>`,
+  user_h: `User`,
+  user_meta: `Sends the request; finally verifies what comes back using the <b>public key</b>`,
+  net_public: `public net`,
+  host_h: `Relay server <span style="color:var(--faint);font-weight:400">(untrusted)</span>`,
+  enc_h: `TEE <span class="sealed">remotely attested</span>`,
+  att_open: `🔑 How is a random key trusted?`,
+  kv_pcr: `Running code PCR0 = `,
+  kv_act: `Egress action = `,
+  v_title: `🔍 Client-side verification`,
+  v_sub: `After receiving response + signature + attestation, three checks run automatically`,
+  c_att: `Remote attestation · check PCR0`,
+  c_sig: `Signature · check integrity`,
+  c_tls: `TLS · terminated inside the TEE`,
+  leg_user: `<i style="background:var(--user)"></i>User`,
+  leg_host: `<i style="background:var(--host)"></i>Host (untrusted — can disrupt, but can't steal or swap)`,
+  leg_enc: `<i style="background:var(--enclave)"></i>TEE (trusted, attested)`,
+  leg_openai: `<i style="background:var(--openai)"></i>OpenAI`,
+  h2_steps: `What the client actually verifies, in three steps`,
+  step1: `<b>Verify the attestation report's signature</b> <span>→ chains all the way to the public TEE (AWS Nitro) root certificate, confirming "this is a genuine TEE".</span>`,
+  step2: `<b>Compare PCR0</b> <span>→ equals the measurement from <b>reproducibly building</b> the audited source yourself, confirming "the code inside is the one that calls the official API".</span>`,
+  step3: `<b>Verify the response signature with the public key from the report</b> <span>→ confirming "this response really came from that TEE and wasn't altered in transit".</span>`,
+  steps_note: `↑ Step 2 rests on a <b style="color:var(--txt)">one-time prerequisite</b>: the user must be able to <b style="color:var(--txt)">reproducibly build</b> the public source into the same PCR0 — the only bridge between "PCR0 ↔ audited source". Otherwise PCR0 is just a hash that matches nothing. It's request-independent; verify it once. See <code>tee-reproducible-build.md</code>.`,
+  h2_limits: `Two hard limits worth admitting (no overclaiming)`,
+  lim1_h: `The trust root sits with TEE (AWS)`,
+  lim1_p: `The attestation report is issued by TEE (AWS). This isn't pure blockchain-style mathematics — it's "trust TEE (AWS) as a company + assume no TEE vulnerability". It moves trust from "the operator" to "the chip / cloud vendor"; it doesn't abolish trust entirely.`,
+  lim2_h: `The OpenAI side can only be "observed"`,
+  lim2_p: `OpenAI doesn't sign its own responses. So "the official API genuinely produced this" can at best reach "the TEE observed it over real TLS" — never a pure mathematical proof. That's the ceiling of this approach.`,
+  m_title: `A random key — how does it get trusted?`,
+  m_sub1: `Every time the TEE boots it generates its signing key <b>at random</b>. The user never knows this public key in advance — it's <b>certified on the spot</b> by the TEE (AWS)-signed attestation, exactly like an HTTPS certificate. The only two things the user fixes in advance are: the <b style="color:var(--accent)">TEE (AWS) root certificate</b> and <b style="color:var(--accent)">your published PCR0</b>.`,
+  chain_root_ct: `① TEE (AWS Nitro) root certificate <span class="pin">trusted in advance · fixed</span>`,
+  chain_root_cd: `TEE (AWS)'s publicly published root. The single trust anchor of the whole chain — not that random public key.`,
+  chain_arrow1: `↓ <b>signed</b> with the TEE (AWS) key`,
+  chain_att_ct: `② attestation document (hardware-issued)`,
+  att_pcr_v: `a3f9·71e0·audited-src`,
+  att_pcr_n: `User compares: = the measurement from <b>reproducibly building</b> the audited source ✓ (<b>fixed</b>)`,
+  att_pk_n: `generated <b>at random</b> this boot ← the one you were wondering about`,
+  att_nonce_v: `this exchange's nonce`,
+  att_nonce_n: `Generated by the relay per exchange and <b>bound into both this attestation and the response signature</b> → it nails down "this proof belongs to this exchange, this pk, this response". Together with a <b>short-lived certificate</b> it resists replay — an old document or a different TEE can't impersonate it. It is <b>not</b> a user-supplied challenge.`,
+  chain_arrow2: `↓ signed with this <b>random pk</b>`,
+  chain_resp_ct: `③ this response + signature`,
+  chain_resp_cd: `The user verifies the signature with the pk extracted from ② → passes.`,
+  att_verdict: `✅ The pk is random, but certified on the spot by TEE (AWS) + PCR0 → trustworthy`,
+  att_btn: `🔄 Restart TEE (re-generate a random key)`,
+  m_sub2: `Just like HTTPS: you don't know a website's public key in advance, but the certificate signed by the CA (the root you trust) certifies it; the server can restart with a new key and still verify. Here <b>TEE (AWS) = CA</b>, <b>attestation = certificate</b>, <b>PCR0 = identity</b>, <b>random pk = the issued public key</b>.`,
+  footer: `Single-file demo · front-end simulation only; hashes/ciphertext are illustrative, no real cryptographic operations.`
+};
+
+const S = {
+  honest: {
+    pcr:{t:TX(`a3f9·71e0·审计源码`,`a3f9·71e0·audited-src`),chg:false},
+    encAct:{t:TX(`调 api.openai.com → 签名`,`call api.openai.com → sign`),chg:false},
+    hostBadge:TX(``,``), encBadge:TX(``,``),
+    hostMeta:TX(`只搬运 <span class="cipher">密文 9f2a··c4</span>，看不懂、改不了`,`Only relays <span class="cipher">ciphertext 9f2a··c4</span> — can't read it, can't change it`),
+    openaiMeta:TX(`官方模型，正品响应`,`Official model, genuine response`),
+    tamperNode:null, attemptNode:null, blockMark:null,
+    att:{pass:true, r:TX(`PCR0 = 审计哈希 ✓`,`PCR0 = audited hash ✓`)},
+    sig:{pass:true, r:TX(`签名与数据一致 ✓`,`Signature matches the data ✓`)},
+    tls:{pass:true, r:TX(`官方证书校验通过 ✓`,`Official certificate verified ✓`)},
+    verdict:{ok:true, t:TX(`✅ 不是黑箱 · 可信`,`✅ Not a black box · trustworthy`)},
+    explain:TX(`<b>老实运营：</b>三道检查全过。你这个人无需被信任——信任降到 <b>TEE (AWS) 硬件 + 可复现的公开代码</b>，其余全是密码学推导出来的。`,`<b>Honest operation:</b> all three checks pass. You as a person don't need to be trusted — trust drops to <b>TEE (AWS) hardware + reproducible public code</b>, and everything else follows from cryptography.`)
+  },
+  code: {
+    pcr:{t:TX(`7c01·be44·被偷换`,`7c01·be44·swapped`),chg:true},
+    encAct:{t:TX(`调便宜模型 → 签名`,`call cheap model → sign`),chg:true},
+    hostBadge:TX(``,``), encBadge:TX(`已偷换`,`swapped`),
+    hostMeta:TX(`只搬运 <span class="cipher">密文 9f2a··c4</span>`,`Only relays <span class="cipher">ciphertext 9f2a··c4</span>`),
+    openaiMeta:TX(`（根本没调）`,`(never called)`),
+    tamperNode:"n-enclave", attemptNode:null, blockMark:null,
+    att:{pass:false, r:TX(`❌ PCR0 = 7c01… 对不上审计哈希 a3f9…，当场识破`,`❌ PCR0 = 7c01… doesn't match audited hash a3f9… — caught on the spot`)},
+    sig:{pass:true, r:TX(`签名本身一致（但签的是假货）`,`Signature itself is consistent (but it signed a fake)`)},
+    tls:{pass:true, r:TX(`—`,`—`)},
+    verdict:{ok:false, t:TX(`❌ 放进来后被抓 · 拒绝`,`❌ Let in, then caught · rejected`)},
+    explain:TX(`<b>攻击①失败：</b>你一改代码，TEE 的 <b>PCR0 哈希立刻跳变</b>（a3f9→7c01）。远程证明把这个哈希报给用户，对不上公开审计源码 → 当场穿帮。<b>这正是只有签名挡不住、必须有远程证明的原因。</b>`,`<b>Attack ① fails:</b> the moment you change the code, the TEE's <b>PCR0 hash jumps</b> (a3f9→7c01). Remote attestation reports that hash to the user; it doesn't match the public audited source → exposed instantly. <b>This is exactly why a signature alone isn't enough and remote attestation is required.</b>`)
+  },
+  resp: {
+    pcr:{t:TX(`a3f9·71e0·审计源码`,`a3f9·71e0·audited-src`),chg:false},
+    encAct:{t:TX(`调 api.openai.com → 签名`,`call api.openai.com → sign`),chg:false},
+    hostBadge:TX(`偷改中`,`altering`), encBadge:TX(``,``),
+    hostMeta:TX(`你在这里改了返回内容 → 与签名不再匹配`,`You edit the returned content here → it no longer matches the signature`),
+    openaiMeta:TX(`官方模型，正品响应`,`Official model, genuine response`),
+    tamperNode:"n-host", attemptNode:null, blockMark:null,
+    att:{pass:true, r:TX(`PCR0 = 审计哈希 ✓`,`PCR0 = audited hash ✓`)},
+    sig:{pass:false, r:TX(`❌ 数据被改，和 TEE 的签名对不上，识破`,`❌ Data was changed; it no longer matches the TEE's signature — caught`)},
+    tls:{pass:true, r:TX(`—`,`—`)},
+    verdict:{ok:false, t:TX(`❌ 放进来后被抓 · 拒绝`,`❌ Let in, then caught · rejected`)},
+    explain:TX(`<b>攻击②失败：</b>响应出 TEE 时已带签名。你在中转服务器上一改内容，<b>数据就和签名对不上</b>，用户验签立刻失败。<b>这正是只有远程证明挡不住、必须有签名的原因。</b>`,`<b>Attack ② fails:</b> the response is already signed when it leaves the TEE. The instant you edit the content on the relay server, <b>the data no longer matches the signature</b> and the user's verification fails. <b>This is exactly why remote attestation alone isn't enough and a signature is required.</b>`)
+  },
+  traffic: {
+    pcr:{t:TX(`a3f9·71e0·审计源码`,`a3f9·71e0·audited-src`),chg:false},
+    encAct:{t:TX(`调 api.openai.com → 签名`,`call api.openai.com → sign`),chg:false},
+    hostBadge:TX(`🔒 偷看/掉包中`,`🔒 snooping/swapping`), encBadge:TX(``,``),
+    hostMeta:TX(`你想解开/伪造 <span class="cipher">9f2a c41b ee07 …</span> → 没有会话密钥，也没有 OpenAI 证书`,`You try to decrypt/forge <span class="cipher">9f2a c41b ee07 …</span> → you have no session key, and no OpenAI certificate`),
+    openaiMeta:TX(`官方模型，正品响应`,`Official model, genuine response`),
+    tamperNode:null, attemptNode:"n-host",
+    blockMark:TX(`🔒 攻击就死在这一段：TLS 在 TEE 内终结，中转服务器只见密文 → 解不开、也冒充不了 OpenAI（根证书焊死在代码里）`,`🔒 The attack dies right here: TLS terminates inside the TEE, the relay server sees only ciphertext → can't decrypt it, and can't impersonate OpenAI (the root cert is hard-wired into the code)`),
+    att:{pass:true, r:TX(`PCR0 = 审计哈希 ✓（攻击没碰到代码）`,`PCR0 = audited hash ✓ (the attack never touched the code)`)},
+    sig:{pass:true, r:TX(`签名一致 ✓（假货根本没能进 TEE）`,`Signature matches ✓ (the fake never made it into the TEE)`)},
+    tls:{blocked:true, r:TX(`🛡️ 假冒被挡在源头：TEE 拒绝任何非官方证书，假响应进不来`,`🛡️ Forgery blocked at the source: the TEE rejects any non-official certificate, so the fake can't get in`)},
+    verdict:{ok:true, t:TX(`✅ 攻击根本进不来 · 仍可信`,`✅ The attack can't even get in · still trustworthy`)},
+    explain:TX(`<b>攻击③——最危险、但被挡死：</b>它和①②不同。①②是"放进来再被抓"；③是想在数据<b>进 TEE、被签名之前</b>就掉包——因为 TEE 没网卡，去 OpenAI 的流量从你中转服务器过。<b>它要是得逞，TEE 会把你的假货当成官方、老实签名，签名✓+远程证明✓ 全过，用户就被骗了。</b>为什么没得逞：到 OpenAI 的 TLS 在 TEE 内部建立，你手里只有解不开的密文；想冒充官方又拿不出 OpenAI 证书，而 TEE 信任的根证书焊死在被审计代码里、塞不进假的。<b>所以你只剩"掐断/拖慢"的捣乱能力——这道缝被堵死，整套机制才成立。</b>`,`<b>Attack ③ — the most dangerous, but shut down:</b> it differs from ① and ②. Those are "let in, then caught"; ③ tries to swap the data <b>before it enters the TEE and gets signed</b> — because the TEE has no network card, the traffic to OpenAI passes through your relay server. <b>If it succeeded, the TEE would take your fake as official and honestly sign it; signature ✓ + attestation ✓ would both pass and the user would be fooled.</b> Why it doesn't: the TLS to OpenAI is established inside the TEE, so all you hold is ciphertext you can't open; to impersonate the official endpoint you'd need OpenAI's certificate, and the root the TEE trusts is hard-wired into the audited code — you can't inject a fake one. <b>So all you're left with is "cut it off / slow it down" disruption — sealing this seam is what makes the whole mechanism hold.</b>`)
+  },
+  ownkey: {
+    pcr:{t:TX(`a3f9·71e0·审计源码`,`a3f9·71e0·audited-src`),chg:false},
+    encAct:{t:TX(`调 api.openai.com → 签名`,`call api.openai.com → sign`),chg:false},
+    hostBadge:TX(`🔑 自造 pk′ 签`,`🔑 self-made pk′ signs`), encBadge:TX(``,``),
+    hostMeta:TX(`你生成自己的密钥对，<b>绕开 TEE</b> 签了个便宜货 —— 但 <span class="cipher">pk′ 不在任何 attestation 里</span>`,`You generate your own keypair and <b>bypass the TEE</b> to sign a cheap response — but <span class="cipher">pk′ is in no attestation</span>`),
+    openaiMeta:TX(`（这次没经过）`,`(not involved this time)`),
+    tamperNode:"n-host", attemptNode:null, blockMark:null,
+    att:{pass:true, r:TX(`PCR0 = 审计哈希 ✓（真 TEE 的 attestation 没动，里面认证的是 TEE 的 pk）`,`PCR0 = audited hash ✓ (the real TEE's attestation is untouched; it certifies the TEE's pk)`)},
+    sig:{pass:false, r:TX(`❌ 你用 pk′ 签，用户却只认 attestation 里那把 pk → 对不上。pk′ 没被任何 TEE (AWS) attestation 认证过`,`❌ You signed with pk′, but the user only honors the pk inside the attestation → mismatch. pk′ was never certified by any TEE (AWS) attestation`)},
+    tls:{pass:true, r:TX(`—`,`—`)},
+    verdict:{ok:false, t:TX(`❌ 自造的 pk 没人认 · 拒绝`,`❌ A self-made pk nobody honors · rejected`)},
+    explain:TX(`<b>攻击④——这正是"扣合"存在的理由：</b>你当然能自造密钥签任何东西，但用户<b>从不用你递过来的公钥</b>验签——他只认<b>被 TEE (AWS) attestation 当场认证过的那把 pk</b>。你的 pk′ 没进过任何 TEE (AWS) 签名的 attestation，用户手里压根没有它 → 你签得再"自洽"也没人认。<b>这就是为什么支柱 A 的签名公钥必须塞进支柱 B 的证明里、两条链焊成一条。</b>`,`<b>Attack ④ — this is exactly why the "binding" exists:</b> sure, you can make your own key and sign anything, but the user <b>never verifies with the public key you hand over</b> — they only honor <b>the pk certified on the spot by the TEE (AWS) attestation</b>. Your pk′ never entered any TEE (AWS)-signed attestation, so the user simply doesn't have it → no matter how "self-consistent" your signature is, nobody honors it. <b>This is why Pillar A's signing public key must be embedded into Pillar B's attestation — the two chains welded into one.</b>`)
+  }
+};
+
+const $ = id => document.getElementById(id);
+const zhCache = {};
+function applyLang(){
+  document.querySelectorAll('[data-i18n]').forEach(el=>{
+    const k = el.getAttribute('data-i18n');
+    if(!(k in zhCache)) zhCache[k] = el.innerHTML;
+    el.innerHTML = (LANG === 'en' && EN[k] != null) ? EN[k] : zhCache[k];
+  });
+  document.documentElement.lang = LANG === 'en' ? 'en' : 'zh-CN';
+  document.title = LANG === 'en' ? 'TEE + signing · how a relay proves itself' : 'TEE + 签名 · 中转自证原理演示';
+}
+function updateToggle(){
+  $('lang-zh').classList.toggle('active', LANG !== 'en');
+  $('lang-en').classList.toggle('active', LANG === 'en');
+}
+function setLang(l){
+  LANG = l;
+  try { localStorage.setItem('poo-lang', l); } catch(e){}
+  applyLang(); updateToggle(); apply(curKey);
+  $('att-restart-note').textContent = '';
+}
+
+function setCheck(elId, resId, st){
+  const el = $(elId);
+  el.classList.remove('pass','fail','blocked');
+  el.classList.add(st.blocked ? 'blocked' : (st.pass ? 'pass' : 'fail'));
+  $(resId).textContent = pick(st.r);
+}
+function apply(key){
+  curKey = key;
+  const d = S[key];
+  // attacker buttons
+  document.querySelectorAll('.atk').forEach(b=>b.classList.toggle('active', b.dataset.atk===key));
+  // TEE
+  const pcr=$('pcr'); pcr.textContent=pick(d.pcr.t); pcr.classList.toggle('changed',d.pcr.chg);
+  const ea=$('enc-act'); ea.textContent=pick(d.encAct.t); ea.classList.toggle('changed',d.encAct.chg);
+  $('enc-badge').textContent=pick(d.encBadge); $('enc-badge').style.color='var(--bad)';
+  $('host-badge').textContent=pick(d.hostBadge); $('host-badge').style.color = key==='traffic'?'var(--warn)':'var(--bad)';
+  $('host-meta').innerHTML=pick(d.hostMeta);
+  $('openai-meta').textContent=pick(d.openaiMeta);
+  // node highlight: red=tampered(放进来), amber=attempting(被挡在外)
+  ['n-enclave','n-host'].forEach(n=>$(n).classList.remove('tampered','attempting'));
+  if(d.tamperNode) $(d.tamperNode).classList.add('tampered');
+  if(d.attemptNode) $(d.attemptNode).classList.add('attempting');
+  // upstream block marker (attack ③)
+  const bm=$('blockmark');
+  if(d.blockMark){ bm.textContent=pick(d.blockMark); bm.classList.add('show'); }
+  else { bm.classList.remove('show'); }
+  // checks
+  setCheck('c-att','r-att',d.att);
+  setCheck('c-sig','r-sig',d.sig);
+  setCheck('c-tls','r-tls',d.tls);
+  // verdict
+  const v=$('verdict'); v.className='verdict '+(d.verdict.ok?'ok':'no'); v.textContent=pick(d.verdict.t);
+  // explain
+  $('explain').innerHTML=pick(d.explain);
+}
+// ---------- two-lane directional flow engine ----------
+let gen = 0;
+const SPEED = 3;   // global slow-down factor for the whole walkthrough
+const sleep = ms => new Promise(r=>setTimeout(r, ms*SPEED));
+const CONNS = ['conn-uh','conn-he','conn-eo'];
+function laneEl(conn,dir){ return document.querySelector('#'+conn+' .lane.'+dir); }
+function setLane(conn,dir,state,color){ laneEl(conn,dir).className = 'lane '+dir+(state?' '+state:'')+(color?' '+color:''); }
+function showLabel(conn,color,label){ const c=$(conn); c.className='conn show-cl '+(color||''); c.querySelector('.cl').textContent=label||''; }
+function hideLabel(conn){ $(conn).className='conn'; }
+function clearFlow(){ CONNS.forEach(conn=>{ hideLabel(conn); setLane(conn,'down'); setLane(conn,'up'); }); }
+function hit(id){ const n=$(id); n.classList.add('fx-hit'); setTimeout(()=>n.classList.remove('fx-hit'),500*SPEED); }
+function fxSign(){ const n=$('n-enclave'); n.classList.add('fx-sign'); setTimeout(()=>n.classList.remove('fx-sign'),1000*SPEED); }
+function fxBad(id){ const n=$(id); n.classList.add('fx-bad'); setTimeout(()=>n.classList.remove('fx-bad'),1400*SPEED); }
+function pulseBlock(){ const b=$('blockmark'); b.classList.add('show','pulse'); setTimeout(()=>b.classList.remove('pulse'),1600*SPEED); }
+function pend(elId,resId){ const el=$(elId); el.classList.remove('pass','fail','blocked'); $(resId).textContent=L('传输中…','in transit…'); }
+function maskResults(){
+  pend('c-att','r-att'); pend('c-sig','r-sig'); pend('c-tls','r-tls');
+  const v=$('verdict'); v.className='verdict'; v.textContent=L('⏳ 验证中…','⏳ verifying…');
+  $('blockmark').classList.remove('show');
+}
+// run one leg on the given lane: flow while active, then settle into a persistent colored trail
+async function flow(conn,dir,color,label,dur,my){
+  if(my!==gen) return false;
+  setLane(conn,dir,'active',color); showLabel(conn,color,label);
+  await sleep(dur);
+  if(my!==gen) return false;
+  setLane(conn,dir,'done',color); hideLabel(conn);
+  return true;
+}
+
+async function play(key){
+  const my = ++gen;
+  apply(key);        // compute node/pcr/badge state
+  maskResults();     // hide verification outcome until the flow arrives
+  clearFlow();
+  await sleep(60); if(my!==gen) return;
+
+  if(key==='honest'){
+    if(!await flow('conn-uh','down','req',L('请求 ▼','request ▼'),430,my))return; hit('n-host');
+    if(!await flow('conn-he','down','cipher',L('vsock·密文 ▼','vsock·cipher ▼'),430,my))return; hit('n-enclave');
+    if(!await flow('conn-eo','down','cipher',L('TLS·密文 ▼','TLS·cipher ▼'),470,my))return; hit('n-openai');
+    await sleep(170); if(my!==gen)return;
+    if(!await flow('conn-eo','up','cipher',L('TLS·密文 ▲','TLS·cipher ▲'),500,my))return;
+    fxSign(); hit('n-enclave'); await sleep(300); if(my!==gen)return;
+    if(!await flow('conn-he','up','signed',L('响应+签名🔏 ▲','response+sig🔏 ▲'),470,my))return; hit('n-host');
+    if(!await flow('conn-uh','up','signed',L('响应+签名🔏 ▲','response+sig🔏 ▲'),470,my))return; hit('n-user');
+
+  } else if(key==='code'){
+    if(!await flow('conn-uh','down','req',L('请求 ▼','request ▼'),380,my))return; hit('n-host');
+    if(!await flow('conn-he','down','req',L('请求 ▼','request ▼'),380,my))return;
+    fxBad('n-enclave'); await sleep(520); if(my!==gen)return;
+    if(!await flow('conn-he','up','bad',L('便宜货+签名 ▲','cheap fake+sig ▲'),480,my))return; hit('n-host');
+    if(!await flow('conn-uh','up','bad',L('便宜货+签名 ▲','cheap fake+sig ▲'),480,my))return; hit('n-user');
+
+  } else if(key==='resp'){
+    if(!await flow('conn-uh','down','req',L('请求 ▼','request ▼'),300,my))return;
+    if(!await flow('conn-he','down','req',L('请求 ▼','request ▼'),300,my))return;
+    if(!await flow('conn-eo','down','cipher',L('TLS·密文 ▼','TLS·cipher ▼'),340,my))return; hit('n-openai');
+    await sleep(120); if(my!==gen)return;
+    if(!await flow('conn-eo','up','cipher',L('TLS·密文 ▲','TLS·cipher ▲'),360,my))return;
+    fxSign(); hit('n-enclave'); await sleep(260); if(my!==gen)return;
+    if(!await flow('conn-he','up','signed',L('响应+签名🔏 ▲','response+sig🔏 ▲'),420,my))return; hit('n-host');
+    fxBad('n-host'); await sleep(360); if(my!==gen)return;
+    if(!await flow('conn-uh','up','bad',L('响应被偷改 ▲','response tampered ▲'),520,my))return; hit('n-user');
+
+  } else if(key==='traffic'){
+    if(!await flow('conn-uh','down','req',L('请求 ▼','request ▼'),300,my))return;
+    if(!await flow('conn-he','down','req',L('请求 ▼','request ▼'),300,my))return;
+    if(!await flow('conn-eo','down','cipher',L('TLS·密文 ▼','TLS·cipher ▼'),340,my))return; hit('n-openai');
+    await sleep(120); if(my!==gen)return;
+    // response coming up — attacker tries to read/forge on this very leg, and fails
+    setLane('conn-eo','up','active','cipher'); showLabel('conn-eo','cipher',L('TLS·密文 ▲','TLS·cipher ▲')); await sleep(320); if(my!==gen)return;
+    pulseBlock(); fxBad('n-host'); setLane('conn-eo','up','active','bad'); showLabel('conn-eo','bad',L('✋ 偷看/掉包失败','✋ snoop/swap failed')); await sleep(950); if(my!==gen)return;
+    setLane('conn-eo','up','active','cipher'); showLabel('conn-eo','cipher',L('TLS·密文 ▲','TLS·cipher ▲')); await sleep(360); if(my!==gen)return;
+    setLane('conn-eo','up','done','cipher'); hideLabel('conn-eo');
+    fxSign(); hit('n-enclave'); await sleep(260); if(my!==gen)return;
+    if(!await flow('conn-he','up','signed',L('响应+签名🔏 ▲','response+sig🔏 ▲'),420,my))return; hit('n-host');
+    if(!await flow('conn-uh','up','signed',L('响应+签名🔏 ▲','response+sig🔏 ▲'),420,my))return; hit('n-user');
+
+  } else if(key==='ownkey'){
+    if(!await flow('conn-uh','down','req',L('请求 ▼','request ▼'),340,my))return; hit('n-host');
+    // operator never forwards to the TEE — signs a cheap response with its own key
+    fxBad('n-host'); await sleep(520); if(my!==gen)return;
+    if(!await flow('conn-uh','up','bad',L('便宜货 + pk′ 签 ▲','cheap fake + pk′ sig ▲'),540,my))return; hit('n-user');
+  }
+
+  if(my!==gen) return;
+  apply(key);            // reveal verification outcome; flow trails stay visible
+}
+
+document.querySelectorAll('.atk').forEach(b=>b.addEventListener('click',()=>play(b.dataset.atk)));
+$('lang-zh').addEventListener('click',()=>setLang('zh'));
+$('lang-en').addEventListener('click',()=>setLang('en'));
+applyLang(); updateToggle();
+clearFlow();       // show the idle two-lane direction guides
+apply('honest');   // static initial state (no animation on load)
+
+// ---------- attestation modal: how a random pubkey gets certified ----------
+function openAtt(){ $('att-modal').classList.add('show'); }
+function closeAtt(){ $('att-modal').classList.remove('show'); }
+function randHex(n){ let s='', h='0123456789abcdef'; for(let i=0;i<n;i++) s+=h[Math.floor(Math.random()*16)]; return s; }
+function restartEnclave(){
+  const el=$('att-pk');
+  el.textContent = 'pk_'+randHex(4)+'·'+randHex(4);
+  el.style.background='rgba(106,69,230,.28)';
+  setTimeout(()=>{ el.style.background=''; }, 40);
+  $('att-restart-note').textContent=L('↑ pk 变了 → 但 PCR0 没变、TEE (AWS) 照样签 → 用户照样验得过','↑ pk changed → but PCR0 didn\'t, TEE (AWS) still signs → the user still verifies fine');
+}
+$('att-open').addEventListener('click', openAtt);
+$('att-modal').addEventListener('click', e=>{ if(e.target.id==='att-modal') closeAtt(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeAtt(); });
+</script>
+</body>
+</html>

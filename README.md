@@ -61,7 +61,7 @@ measured TCB lives in [`enclave/`](enclave); built twice with a pinned toolchain
 **Canonical PCR0** of the current release:
 
 ```
-23696aa5aa2c2dbacfe6dc48c21e67400dd2571f7105c359dd072d3ae14cfac10bfe8509ae7e3db2a078d630d81efec7
+eb853fd0590876c37224862d1ac15d08b75be9ce400baa83cab0af04c8369d8abf0ef21fe5edfb53eeb38dce94dce8c1
 ```
 
 This is the value to compare against — but **don't take it on trust**: reproduce it yourself
@@ -86,6 +86,7 @@ and the code is one conforming implementation of it.
 | [`docs/proof-of-observation-protocol-v1.md`](docs/proof-of-observation-protocol-v1.md) | **Normative protocol specification** (RFC 2119) |
 | [`docs/`](docs) | Architecture, design rationale, the reproducible-build procedure |
 | [`docs/tee-verify.html`](docs/tee-verify.html) — [**open live ↗**](https://focuxdot.github.io/proof-of-observation/tee-verify.html) | A self-contained **browser verifier** — paste a response, verify locally |
+| [`docs/tee-attestation-demo.html`](docs/tee-attestation-demo.html) — [**open live ↗**](https://focuxdot.github.io/proof-of-observation/tee-attestation-demo.html) | Interactive walkthrough of **how the self-attestation works** |
 
 ## Verify a response
 

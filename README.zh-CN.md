@@ -55,7 +55,7 @@ enclave 的完整受度量 TCB 位于 [`enclave/`](enclave)；在固定工具链
 **当前发布版的规范 PCR0：**
 
 ```
-23696aa5aa2c2dbacfe6dc48c21e67400dd2571f7105c359dd072d3ae14cfac10bfe8509ae7e3db2a078d630d81efec7
+eb853fd0590876c37224862d1ac15d08b75be9ce400baa83cab0af04c8369d8abf0ef21fe5edfb53eeb38dce94dce8c1
 ```
 
 这是你比对的目标值 —— 但**别只信这个数**：自己复现它（见下文「复现 PCR0」），再和运行中 enclave 的
@@ -77,6 +77,7 @@ attestation 比对。完整流程见 [`docs/tee-reproducible-build.md`](docs/tee
 | [`docs/proof-of-observation-protocol-v1.md`](docs/proof-of-observation-protocol-v1.md) | **规范协议文本**（RFC 2119） |
 | [`docs/`](docs) | 架构、设计 rationale、可复现构建流程 |
 | [`docs/tee-verify.html`](docs/tee-verify.html) — [**在线打开 ↗**](https://focuxdot.github.io/proof-of-observation/tee-verify.html) | 自包含的**浏览器验证器** —— 粘贴响应即可本地验证 |
+| [`docs/tee-attestation-demo.html`](docs/tee-attestation-demo.html) — [**在线打开 ↗**](https://focuxdot.github.io/proof-of-observation/tee-attestation-demo.html) | **自证原理**交互演示页 |
 
 ## 验证一条响应
 
