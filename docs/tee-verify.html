@@ -144,6 +144,12 @@
   .vc-more:hover { text-decoration:underline; }
   .vc-soft { display:flex; align-items:center; gap:9px; margin:0 16px 9px 19px; padding:7px 12px; font-size:14px;
     background:var(--warn-bg); border:1px solid var(--warn-border); border-radius:8px; color:var(--fg); }
+  .vc-soft.ok { background:var(--ok-bg); border-color:var(--ok-border); }
+  .vc-soft.bad { background:var(--bad-bg); border-color:var(--bad-border); }
+  .vc-soft.skip { background:var(--warn-bg); border-color:var(--warn-border); }
+  .vc-soft.ok .vc-sub-ico { background:var(--ok-bg); color:var(--ok); border:1px solid var(--ok-border); }
+  .vc-soft.bad .vc-sub-ico { background:var(--bad-bg); color:var(--bad); border:1px solid var(--bad-border); }
+  .vc-soft.skip .vc-sub-ico { background:var(--warn-bg); color:var(--warn); border:1px solid var(--warn-border); }
   .vc-soft .vc-sub-cmp { margin-left:auto; }
   /* 详情弹窗 */
   .modal-ov { position:fixed; inset:0; background:rgba(31,35,40,.55); display:flex; align-items:center;
@@ -225,6 +231,39 @@
   .verdict .vmodel { color:var(--fg); font-size:16.5px; font-weight:600; margin:9px 0 2px; }
   .verdict .vmodel b { color:var(--accent); }
   .verdict .vmodel span { color:var(--dim); font-weight:400; font-size:13px; }
+  .verdict.trust-summary { padding:0; overflow:hidden; color:var(--fg); font-size:16px; font-weight:500; }
+  .trust-top { padding:18px 20px 14px; display:flex; align-items:flex-start; gap:13px; }
+  .trust-icon { flex:none; width:32px; height:32px; border-radius:9px; display:grid; place-items:center;
+    background:var(--ok); color:var(--btn-fg); font-size:20px; line-height:1; margin-top:2px; }
+  .verdict.warn .trust-icon { background:var(--warn); }
+  .trust-copy { flex:1; min-width:0; }
+  .trust-title { margin:0; font-size:25px; line-height:1.25; color:var(--ok); font-weight:800; letter-spacing:0; }
+  .verdict.warn .trust-title { color:var(--warn); }
+  .trust-lead { margin:5px 0 0; color:var(--fg); font-size:16px; line-height:1.55; font-weight:600; }
+  .trust-lead b { color:var(--accent); word-break:break-word; }
+  .trust-facts { display:grid; grid-template-columns:minmax(210px,1.45fr) minmax(155px,1fr) minmax(170px,1.1fr) minmax(130px,.85fr) minmax(130px,.85fr); gap:8px; padding:0 20px 14px; }
+  .trust-fact { background:rgba(255,255,255,.58); border:1px solid rgba(31,35,40,.09); border-radius:9px; padding:9px 11px; min-width:0; }
+  .trust-fact-k { color:var(--dim); font-size:12px; line-height:1.3; font-weight:700; }
+  .trust-fact-v { margin-top:4px; color:var(--fg); font:700 13.5px/1.35 ui-monospace,Menlo,monospace; word-break:break-word; }
+  .trust-fact-v .dim { color:var(--dim); font-family:inherit; font-weight:600; }
+  .trust-fact-v.okc { color:var(--ok); font-family:inherit; }
+  .trust-fact-v.warnc { color:var(--warn); font-family:inherit; }
+  .trust-meta { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; padding:0 20px 14px;
+    color:var(--dim); font-size:12.5px; line-height:1.45; font-weight:600; }
+  .trust-meta b { color:var(--fg); font:700 12.5px/1.45 ui-monospace,Menlo,monospace; }
+  .trust-meta .dot { color:var(--line); }
+  .trust-proof { border-top:1px solid rgba(31,35,40,.08); background:rgba(255,255,255,.42); padding:12px 20px 14px; }
+  .trust-proof-title { color:var(--dim); font-size:12px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; margin-bottom:8px; }
+  .trust-checks { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+  .trust-check { display:flex; gap:8px; align-items:flex-start; color:var(--fg); font-size:13.5px; line-height:1.45; font-weight:600; }
+  .trust-check i { flex:none; width:18px; height:18px; border-radius:50%; display:grid; place-items:center; margin-top:1px;
+    background:var(--ok-bg); border:1px solid var(--ok-border); color:var(--ok); font-style:normal; font-size:12px; font-weight:800; }
+  .trust-note { margin-top:9px; color:var(--dim); font-size:12.5px; line-height:1.55; font-weight:500; }
+  .trust-note b { color:var(--fg); }
+  .trust-source { border-top:1px solid rgba(31,35,40,.08); padding:9px 20px 13px; background:rgba(255,255,255,.28);
+    color:var(--dim); font-size:12.5px; line-height:1.5; font-weight:600; }
+  .trust-source a { color:var(--accent); font-weight:800; text-decoration:none; }
+  .trust-source a:hover { text-decoration:underline; }
 
   .hint { font-size:13px; color:var(--dim); }
 
@@ -242,7 +281,7 @@
   /* proof 数据弹窗:格式化 JSON,留白/缩进/分色,保证阅读体验 */
   pre.jsonview { margin:10px 0 0; max-height:62vh; overflow:auto; background:var(--code-bg); border:1px solid var(--line);
     border-radius:9px; padding:14px 16px; font:13px/1.7 ui-monospace,Menlo,monospace; color:var(--fg);
-    white-space:pre; word-break:normal; -webkit-overflow-scrolling:touch; }
+    white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; -webkit-overflow-scrolling:touch; }
   pre.jsonview .jk { color:var(--accent); font-weight:600; }
   pre.jsonview .js { color:#0a7d33; word-break:break-all; }
   pre.jsonview .jn { color:#9a3d00; }
@@ -281,6 +320,21 @@
   .dcmp .okc { color:var(--ok); font-weight:700; } .dcmp .badc { color:var(--bad); font-weight:700; }
   /* 开始验证:大、居中的主按钮 */
   #play { padding:15px 58px; font-size:20px; margin-top:6px; }
+  @media (max-width:640px){
+    .trust-top { padding:16px 15px 12px; gap:10px; }
+    .trust-icon { width:29px; height:29px; border-radius:8px; font-size:18px; }
+    .trust-title { font-size:21px; }
+    .trust-lead { font-size:14.5px; }
+    .trust-facts, .trust-checks { grid-template-columns:1fr; }
+    .trust-facts { padding:0 15px 12px; }
+    .trust-meta { padding:0 15px 12px; }
+    .trust-proof { padding:11px 15px 13px; }
+    .trust-source { padding:9px 15px 12px; }
+  }
+  @media (min-width:641px) and (max-width:760px){
+    .trust-facts { grid-template-columns:1fr 1fr; }
+    .trust-checks { grid-template-columns:1fr; }
+  }
 </style>
 </head>
 <body>
@@ -288,7 +342,7 @@
   <h1>中转自证校验器 <span style="color:var(--dim);font-weight:500;font-size:16.5px">Proof-of-Observation</span></h1>
   <p class="sub"><b>自己验,不用信中转方。</b> 你从中转方拿到的回答,是不是<b>来自官方模型、且字节未被篡改</b>?把你收到的整段响应贴进下面 —— 这个页面在<b>你本地</b>逐关核对密码学证明,结论只有两种:<b style="color:var(--ok)">真</b>,或者<b style="color:var(--bad)">当场被识破</b>。</p>
   <div class="how3">
-    <span class="step"><b>1</b>存下整段流式响应(末尾会自动带 <code>tee.proof</code>)</span>
+    <span class="step"><b>1</b>存下响应材料(SSE / 非流式 proof)</span>
     <span class="step"><b>2</b>贴 / 拖进下面的框</span>
     <span class="step"><b>3</b>点「验证」,看顶部结论</span>
   </div>
@@ -301,11 +355,11 @@
   <div class="panel" id="loadPanel">
     <h2>把你收到的响应放进来</h2>
     <div class="drop" id="drop">
-      把 <b>response.sse</b> / <b>bundle.json</b> 文件拖到这里,或点此选择(可多选)
+      把 <b>response.sse</b> / <b>response.multipart</b> / <b>body+proof.txt</b> / <b>bundle.json</b> 文件拖到这里,或点此选择(可多选)
       <input type="file" id="file" accept=".json,.sse,.txt,application/json,text/plain" multiple hidden />
     </div>
-    <label>或直接粘贴整段流式响应(连 curl 命令一起贴也行)</label>
-    <textarea class="pastebox" id="pasteInput" placeholder="粘贴从 event: message_start 到末尾 event: tee.proof 的整段流式响应。&#10;（只粘 tee.proof 那段也能验真实性,但缺响应正文就验不了响应有没有被改）"></textarea>
+    <label>或直接粘贴完整响应(连 curl 命令一起贴也行)</label>
+    <textarea class="pastebox" id="pasteInput" placeholder="粘贴从 event: message_start 到末尾 event: tee.proof 的整段流式响应，或粘贴 multipart/mixed / raw body + proof 尾段的非流式响应。&#10;（只粘 tee.proof 那段也能验真实性,但缺响应正文就验不了响应有没有被改）"></textarea>
     <div class="cta"><button id="play">▶ 开始验证</button></div>
     <div class="chips">
       <span class="chip" id="chip-bundle">响应材料 未载入</span>
@@ -313,7 +367,9 @@
       <span class="hint" id="loadMsg"></span>
       <button class="proofbtn hidden" id="btn-proof" type="button" style="margin-left:auto">▸ 查看 proof 数据</button>
     </div>
-    <p class="note"><b>怎么拿到响应材料?</b> 流式调用时,整段响应末尾会自动带一段 <code>event: tee.proof</code> —— 把从 <code>message_start</code> 到 <code>tee.proof</code> 的整段存下来就行。例:<br /><code>curl -N https://api.example.com/v1/messages -H "Authorization: Bearer &lt;key&gt;" -d '{…,"stream":true}' &gt; resp.sse</code></p>
+    <p class="note"><b>怎么拿到响应材料?</b> 流式调用保存整段 SSE(末尾 <code>event: tee.proof</code>);非流式 proof 模式保存完整 <code>multipart/mixed</code> 响应,或保存终端输出里的 raw body + proof 尾段。例:<br />
+    流式:<br /><code>curl -N https://api.wokey.ai/v1/messages -H "Authorization: Bearer &lt;key&gt;" -d '{…,"stream":true}' &gt; resp.sse</code><br />
+    非流式(multipart proof):<br /><code>curl https://api.wokey.ai/v1/messages -H "Authorization: Bearer &lt;key&gt;" -H "x-wokey-tee-proof-mode: multipart" -d '{…,"stream":false}' &gt; resp.multipart</code></p>
   </div>
 
   <!-- 结论 · 前置(验完先在顶部给大白话结论)-->
@@ -367,7 +423,7 @@
 <script type="text/plain" id="src-cose">
 // 真 Nitro attestation 文档验证器（参考实现，已在真硬件文档上验通）。
 //
-//   node verifier/verify-attestation-cose.mjs <att.b64>
+//   node verify-attestation-cose.mjs <att.b64>
 //
 // 与 mock 的 verify-attestation-cose.mjs 不同：真 Nitro 用 CBOR + COSE_Sign1 + ECDSA P-384(ES384)
 // + SHA384 PCR + X.509 证书链到 AWS Nitro 根。这份是生产级 attestation 半边的参考。
@@ -645,6 +701,9 @@ function trimSseDataPrefix(line,prefix){
   while(p<line.length&&(line[p]===32||line[p]===9))p++;
   return line.subarray(p);
 }
+function isAsciiWhitespaceByte(b){
+  return b===9||b===10||b===13||b===32;
+}
 function parseProofEventBytes(bytes){
   const markerLf=te.encode('event: tee.proof\n');
   const markerCrLf=te.encode('event: tee.proof\r\n');
@@ -654,17 +713,20 @@ function parseProofEventBytes(bytes){
   const eventBlock=bytes.subarray(idx);
   const dataPrefix=te.encode('data:');
   const dataLines=[];
+  let eventEnd=-1;
   for(let p=0;p<=eventBlock.length;){
     const nl=eventBlock.indexOf(10,p);
     const end=nl>=0?nl:eventBlock.length;
     let line=eventBlock.subarray(p,end);
     if(line.length&&line[line.length-1]===13)line=line.subarray(0,line.length-1);
     if(startsWithBytes(line,dataPrefix))dataLines.push(td.decode(trimSseDataPrefix(line,dataPrefix)));
-    else if(line.length===0&&dataLines.length)break;
+    else if(line.length===0&&dataLines.length){eventEnd=nl>=0?nl+1:eventBlock.length;break;}
     if(nl<0)break;
     p=nl+1;
   }
   if(!dataLines.length)return null;
+  if(eventEnd<0)return null;
+  for(let i=eventEnd;i<eventBlock.length;i++)if(!isAsciiWhitespaceByte(eventBlock[i]))return null;
   const proof=JSON.parse(dataLines.join('\n'));
   if(!isProofWire(proof))throw new Error('tee.proof data 字段不是有效证明材料');
   const firstEvent=findFirstLinePrefix(before,te.encode('event: '));
@@ -683,6 +745,141 @@ function parseLooseProofData(text){
     const o=JSON.parse(candidate);
     return isProofWire(o)?o:null;
   }catch{return null;}
+}
+function findBytes(bytes,needle,offset=0){
+  if(!needle.length||needle.length>bytes.length)return -1;
+  for(let i=Math.max(0,offset);i<=bytes.length-needle.length;i++)if(startsWithBytes(bytes,needle,i))return i;
+  return -1;
+}
+function consumeLineEnding(bytes,offset){
+  if(bytes[offset]===13&&bytes[offset+1]===10)return offset+2;
+  if(bytes[offset]===10)return offset+1;
+  return -1;
+}
+function firstMultipartBoundary(bytes){
+  const dash=te.encode('--');
+  let start=startsWithBytes(bytes,dash,0)?0:-1;
+  if(start<0){
+    for(let i=0;i<bytes.length;i++){
+      if(bytes[i]===10&&startsWithBytes(bytes,dash,i+1)){start=i+1;break;}
+    }
+  }
+  if(start<0)return null;
+  const nl=bytes.indexOf(10,start);
+  if(nl<0)return null;
+  let line=bytes.subarray(start,nl);
+  if(line.length&&line[line.length-1]===13)line=line.subarray(0,line.length-1);
+  const text=td.decode(line);
+  if(!text.startsWith('--')||text.endsWith('--'))return null;
+  return {boundary:text.slice(2),offset:start};
+}
+function stripBoundarySeparatorLineEnding(bytes){
+  if(bytes.length>=2&&bytes[bytes.length-2]===13&&bytes[bytes.length-1]===10)return bytes.subarray(0,bytes.length-2);
+  if(bytes.length>=1&&bytes[bytes.length-1]===10)return bytes.subarray(0,bytes.length-1);
+  return bytes;
+}
+function isProofPartHeaders(headers){
+  return /content-disposition:\s*[^;\r\n]*(?:;\s*)?name="?proof"?/i.test(headers)
+    || /content-type:\s*application\/[^;\r\n]*proof[^;\r\n]*/i.test(headers);
+}
+function readMultipartBoundary(bytes,boundaryBytes,offset){
+  if(!startsWithBytes(bytes,boundaryBytes,offset))return null;
+  let p=offset+boundaryBytes.length;
+  const closing=bytes[p]===45&&bytes[p+1]===45;
+  if(closing)p+=2;
+  if(closing&&p===bytes.length)return {closing,nextOffset:p};
+  const nextOffset=consumeLineEnding(bytes,p);
+  if(nextOffset<0)return null;
+  return {closing,nextOffset};
+}
+function multipartHeaderEnd(bytes,offset){
+  const crlf=findBytes(bytes,te.encode('\r\n\r\n'),offset);
+  const lf=findBytes(bytes,te.encode('\n\n'),offset);
+  if(crlf>=0&&(lf<0||crlf<lf))return {headerEnd:crlf,bodyStart:crlf+4};
+  if(lf>=0)return {headerEnd:lf,bodyStart:lf+2};
+  return null;
+}
+function multipartContentLength(headers){
+  const lines=headers.split(/\r?\n/);
+  for(const line of lines){
+    const m=line.match(/^content-length:\s*(\d+)\s*$/i);
+    if(!m)continue;
+    const n=Number.parseInt(m[1],10);
+    return Number.isFinite(n)&&n>=0?n:null;
+  }
+  return null;
+}
+function readMultipartPart(bytes,offset){
+  const headerEnd=multipartHeaderEnd(bytes,offset);
+  if(!headerEnd)return null;
+  const headers=td.decode(bytes.subarray(offset,headerEnd.headerEnd));
+  const length=multipartContentLength(headers);
+  if(length===null)return null;
+  const bodyStart=headerEnd.bodyStart;
+  const bodyEnd=bodyStart+length;
+  if(bodyEnd>bytes.length)return null;
+  const nextBoundaryOffset=consumeLineEnding(bytes,bodyEnd);
+  if(nextBoundaryOffset<0)return null;
+  return {headers,body:bytes.subarray(bodyStart,bodyEnd),nextBoundaryOffset};
+}
+function parseProofMultipartBytes(bytes){
+  const first=firstMultipartBoundary(bytes);
+  if(!first)return null;
+  const capture=bytes.subarray(first.offset);
+  const boundaryBytes=te.encode('--'+first.boundary);
+  const firstBoundary=readMultipartBoundary(capture,boundaryBytes,0);
+  if(!firstBoundary||firstBoundary.closing)return null;
+  const responsePart=readMultipartPart(capture,firstBoundary.nextOffset);
+  if(!responsePart)return null;
+  const proofBoundary=readMultipartBoundary(capture,boundaryBytes,responsePart.nextBoundaryOffset);
+  if(!proofBoundary||proofBoundary.closing){
+    if(first.offset<=0||!isProofPartHeaders(responsePart.headers))return null;
+    let proof=null, unavailable=null;
+    try{
+      const parsed=JSON.parse(td.decode(responsePart.body));
+      if(isProofWire(parsed))proof=parsed;
+      else if(parsed&&parsed.type==='tee.proof_unavailable')unavailable=parsed;
+    }catch{}
+    return {bodyBytes:stripBoundarySeparatorLineEnding(bytes.subarray(0,first.offset)),proof,unavailable,tail:true};
+  }
+  const proofPart=readMultipartPart(capture,proofBoundary.nextOffset);
+  if(!proofPart)return null;
+  const closingBoundary=readMultipartBoundary(capture,boundaryBytes,proofPart.nextBoundaryOffset);
+  if(!closingBoundary||!closingBoundary.closing)return null;
+  let proof=null, unavailable=null;
+  try{
+    const parsed=JSON.parse(td.decode(proofPart.body));
+    if(isProofWire(parsed))proof=parsed;
+    else if(parsed&&parsed.type==='tee.proof_unavailable')unavailable=parsed;
+  }catch{}
+  return {bodyBytes:responsePart.body,proof,unavailable,tail:false};
+}
+function validSha256Hex(s){
+  return typeof s==='string' && /^[a-f0-9]{64}$/i.test(s);
+}
+function consumeLeadingBlankLine(bytes,offset){
+  let p=offset;
+  while(bytes[p]===32||bytes[p]===9)p++;
+  if(bytes[p]===13&&bytes[p+1]===10)return p+2;
+  if(bytes[p]===10)return p+1;
+  return -1;
+}
+async function normalizePastedBodyBytes(bodyBytes,proof,allowLeadingBlankTrim){
+  if(!allowLeadingBlankTrim || !proof || !validSha256Hex(proof.response_body_sha256)){
+    return {bodyBytes,ignoredLeadingBytes:0};
+  }
+  const expected=String(proof.response_body_sha256).toLowerCase();
+  if(bytesToHex(await sha256(bodyBytes))===expected)return {bodyBytes,ignoredLeadingBytes:0};
+  let offset=0;
+  for(;;){
+    const next=consumeLeadingBlankLine(bodyBytes,offset);
+    if(next<=offset)return {bodyBytes,ignoredLeadingBytes:0};
+    offset=next;
+    const candidate=bodyBytes.subarray(offset);
+    if(bytesToHex(await sha256(candidate))===expected){
+      return {bodyBytes:candidate,ignoredLeadingBytes:offset};
+    }
+  }
 }
 
 // v2 字段分解声明:与 verifier/signing.ts buildV2Statement 逐字节一致(golden 向量锁)。
@@ -1007,6 +1204,8 @@ async function runChecks(bundle, trust, nonceField){
          : 'nonce 不同源 —— 把别处的 attestation 拼接到了这条响应上。')};
 
   // 段C 本次响应 → 可信回答(消费:段B 的可信签名钥)
+  const signedSourceAndModel = '来自 <b>'+esc(host)+'</b>'+(servedModel?(' 的 <b>'+esc(servedModel)+'</b>'):'');
+  const signedScope = servedModel ? '模型、来源和响应内容' : '来源和响应内容';
   const cModals = {
     hash:
       '<h3>步骤1 · 你看到的响应,和TEE签名时的字节一致吗?</h3>'+
@@ -1044,11 +1243,11 @@ async function runChecks(bundle, trust, nonceField){
     soft: null,
     produces: !valid ? (sigErr?('验签异常:'+esc(sigErr)):'签名未通过 → 来源与内容都无法确认。')
       : !hasResponseBody ? '声明验签通过:host / nonce / 响应哈希确由TEE签出;但你<b>没贴响应正文</b>,无法证明看到的字节 == 这个哈希。'
-      : bodyOk ? ('得到 <b>可信回答</b> —— 一字未改'+(servedModel?(' · 实际型号 <b>'+esc(servedModel)+'</b>'):'')+' · 来自 host <b>'+esc(host)+'</b>(型号 / host 均随响应一起签名,不可篡改)。')
+      : bodyOk ? ('得到 <b>可信回答</b> —— '+signedScope+'已完成核验。')
       : '响应正文哈希 ≠ 签名覆盖值 → 这段被改过了。'};
 
   const stages=[stageA, stageB, stageC];
-  return {ok:stages.every(s=>s.ok), stages, fresh, mode:hasResponseBody?'full':'proof-only', servedModel, host};
+  return {ok:stages.every(s=>s.ok), stages, fresh, mode:hasResponseBody?'full':'proof-only', servedModel, host, pcr0:attPcr0||t.pcr0||''};
 }
 
 // ───────── UI ─────────
@@ -1107,19 +1306,47 @@ function highlightJsonText(esc){
 const escJsonHtml=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 // 格式化 JSON 对象 → 缩进 + 分色。
 function highlightJson(obj){ return highlightJsonText(escJsonHtml(JSON.stringify(obj,null,2))); }
-// 完整响应体弹窗:SSE 事件流逐行,把每条 data: 里的 JSON 展开美化,其余原样;再整体分色。
-function showResponseBody(){
-  if(!working||!working.responseBody_b64){ openModal('<div class="mlabel">响应体</div><p class="note">这份材料没有响应正文。</p>'); return; }
-  const bytes=b64ToBytes(working.responseBody_b64);
-  const text=new TextDecoder().decode(bytes);
-  const pretty=text.split('\n').map(line=>{
+function formatSseResponseBodyText(text){
+  return text.split('\n').map(line=>{
     const m=line.match(/^(data:\s*)(\{[\s\S]*\}|\[[\s\S]*\])\s*$/);
     if(m){ try{ return m[1]+JSON.stringify(JSON.parse(m[2]),null,2); }catch{} }
     return line;
   }).join('\n');
-  openModal('<div class="mlabel">响应体 · 你实际收到的字节(共 '+bytes.length+' 字节)</div>'+
-    '<p class="note">这是 <span class="term" title="可信执行环境">TEE</span> 签名覆盖的完整响应正文(SSE 事件流;每条 <code>data:</code> 里的 JSON 已展开格式化便于阅读,字节本身未改 —— 哈希仍按原始字节计算)。</p>'+
-    '<pre class="jsonview">'+highlightJsonText(escJsonHtml(pretty))+'</pre>');
+}
+function formatResponseBodyText(text){
+  const trimmed=text.trim();
+  if(trimmed&&(trimmed[0]==='{'||trimmed[0]==='[')){
+    try{
+      return {
+        kind:'JSON 响应体',
+        text:JSON.stringify(JSON.parse(trimmed),null,2),
+        note:'这是 <span class="term" title="可信执行环境">TEE</span> 签名覆盖的完整响应正文(JSON 已展开格式化便于阅读,字节本身未改 —— 哈希仍按原始字节计算)。'
+      };
+    }catch{}
+  }
+  const prettySse=formatSseResponseBodyText(text);
+  if(prettySse!==text||/^(event|data):/m.test(text)){
+    return {
+      kind:'SSE 事件流',
+      text:prettySse,
+      note:'这是 <span class="term" title="可信执行环境">TEE</span> 签名覆盖的完整响应正文(SSE 事件流;每条 <code>data:</code> 里的 JSON 已展开格式化便于阅读,字节本身未改 —— 哈希仍按原始字节计算)。'
+    };
+  }
+  return {
+    kind:'原始响应体',
+    text,
+    note:'这是 <span class="term" title="可信执行环境">TEE</span> 签名覆盖的完整响应正文(按原始文本显示;字节本身未改 —— 哈希仍按原始字节计算)。'
+  };
+}
+// 完整响应体弹窗:JSON 整体格式化;SSE 逐行展开 data: JSON;最终仅改展示,不改参与哈希的字节。
+function showResponseBody(){
+  if(!working||!working.responseBody_b64){ openModal('<div class="mlabel">响应体</div><p class="note">这份材料没有响应正文。</p>'); return; }
+  const bytes=b64ToBytes(working.responseBody_b64);
+  const text=new TextDecoder().decode(bytes);
+  const formatted=formatResponseBodyText(text);
+  openModal('<div class="mlabel">响应体 · '+formatted.kind+' · 你实际收到的字节(共 '+bytes.length+' 字节)</div>'+
+    '<p class="note">'+formatted.note+'</p>'+
+    '<pre class="jsonview">'+highlightJsonText(escJsonHtml(formatted.text))+'</pre>');
 }
 // 从已载入材料解析出 proof 签名声明字段 + 解码后的 COSE attestation。
 async function showProofData(){
@@ -1139,22 +1366,103 @@ async function showProofData(){
 }
 
 // 从已签名的响应里解出「实际服务的型号」——三格式都覆盖:
-//   不同 SSE 格式 → 取顶层/嵌套 model 字段。
+//   普通 JSON 响应体 / 不同 SSE 格式 → 取顶层/嵌套 model 字段。
 // 它是响应字节的一部分(被 response_body_sha256 签名覆盖),故可靠 = 上游实际服务的型号。
-function extractServedModel(b64){
+function modelFromResponseJson(j){
+  return (j&&j.message&&typeof j.message.model==='string'&&j.message.model)
+    || (j&&j.response&&typeof j.response.model==='string'&&j.response.model)
+    || (typeof (j&&j.model)==='string'?j.model:null);
+}
+function messageIdFromResponseJson(j){
+  return (j&&j.message&&typeof j.message.id==='string'&&j.message.id)
+    || (j&&j.response&&typeof j.response.id==='string'&&j.response.id)
+    || (typeof (j&&j.id)==='string'?j.id:null);
+}
+function extractResponseField(b64, pick){
   try{
     const text=new TextDecoder().decode(b64ToBytes(b64));
+    const trimmed=text.trim();
+    if(trimmed){
+      try{
+        const value=pick(JSON.parse(trimmed));
+        if(value) return value;
+      }catch{}
+    }
     for(const line of text.split('\n')){
       const m=line.match(/^data: (.+)$/); if(!m||m[1]==='[DONE]') continue;
       let j; try{ j=JSON.parse(m[1]); }catch{ continue; }
-      const model=(j&&j.message&&j.message.model)||(j&&j.response&&j.response.model)||(typeof (j&&j.model)==='string'?j.model:null);
-      if(model) return model;
+      const value=pick(j);
+      if(value) return value;
     }
   }catch{}
   return null;
 }
+function extractServedModel(b64){
+  return extractResponseField(b64, modelFromResponseJson);
+}
+function extractMessageId(b64){
+  return extractResponseField(b64, messageIdFromResponseJson);
+}
+function maskMessageId(id){
+  const s=String(id||'').trim();
+  if(!s) return null;
+  if(s.length<=8) return s.slice(0,2)+'…'+s.slice(-2);
+  if(s.length<=18) return s.slice(0,5)+'…'+s.slice(-4);
+  return s.slice(0,8)+'…'+s.slice(-6);
+}
+function maskFingerprint(v){
+  const s=String(v||'').trim();
+  if(!s) return null;
+  if(s.length<=20) return s;
+  return s.slice(0,8)+'…'+s.slice(-8);
+}
+function formatLocalVerifyTime(d=new Date()){
+  const pad=(n)=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
+}
 function escHtml(s){
   return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function trustFact(label,value,cls=''){
+  return '<div class="trust-fact"><div class="trust-fact-k">'+escHtml(label)+'</div><div class="trust-fact-v '+cls+'">'+value+'</div></div>';
+}
+function trustCheck(text){
+  return '<div class="trust-check"><i>✓</i><span>'+text+'</span></div>';
+}
+function renderTrustSummary(o){
+  const model=o.model?('<b>'+escHtml(o.model)+'</b>'):'<span class="dim">响应未声明</span>';
+  const messageId=o.messageId?('<b>'+escHtml(o.messageId)+'</b>'):'<span class="dim">响应未声明</span>';
+  const leadModel=o.model?(' 的 <b>'+escHtml(o.model)+'</b>'):'';
+  const icon=o.kind==='warn'?'!':'✓';
+  const integrityClass=o.kind==='warn'?'warnc':'okc';
+  const meta=[];
+  if(o.verifiedAt) meta.push('本地验证于 <b>'+escHtml(o.verifiedAt)+'</b>');
+  if(o.pcr0) meta.push('PCR0 <b>'+escHtml(maskFingerprint(o.pcr0))+'</b>');
+  return '<div class="trust-top">'+
+      '<div class="trust-icon">'+icon+'</div>'+
+      '<div class="trust-copy">'+
+        '<div class="trust-title">'+escHtml(o.title)+'</div>'+
+        '<p class="trust-lead">'+o.leadPrefix+'<b>'+escHtml(o.host)+'</b>'+leadModel+'。</p>'+
+      '</div>'+
+    '</div>'+
+    '<div class="trust-facts">'+
+      trustFact('模型',model)+
+      trustFact('Message ID',messageId)+
+      trustFact('来源','<b>'+escHtml(o.host)+'</b>')+
+      trustFact('完整性',escHtml(o.integrity),integrityClass)+
+      trustFact('执行环境',escHtml(o.environment),'okc')+
+    '</div>'+
+    (meta.length?'<div class="trust-meta">'+meta.join('<span class="dot">·</span>')+'</div>':'')+
+    '<div class="trust-proof">'+
+      '<div class="trust-proof-title">为什么可信</div>'+
+      '<div class="trust-checks">'+
+        trustCheck('TEE 远程证明通过，签名钥属于审计过的执行环境')+
+        trustCheck('响应签名通过，来源和响应正文 hash 被签名覆盖')+
+        trustCheck(o.hashCheck)+
+      '</div>'+
+      (o.note?'<div class="trust-note">'+o.note+'</div>':'')+
+    '</div>'+
+    '<div class="trust-source">本页开源: <a href="https://github.com/focuxdot/proof-of-observation" target="_blank" rel="noopener noreferrer">focuxdot/proof-of-observation</a> · 可自行审计和复现验证流程</div>';
 }
 function showVerdictMessage(kind,title,body){
   const v=$('verdict');
@@ -1200,6 +1508,28 @@ function refreshLoad(){
 function loadSseText(text){
   return loadSseBytes(te.encode(text));
 }
+async function loadMultipartBytes(bytes){
+  const parsed=parseProofMultipartBytes(bytes);
+  if(!parsed)return false;
+  if(!parsed.proof){
+    loaded=null; partialProof=null;
+    if(parsed.unavailable){
+      $('loadMsg').textContent='已识别 multipart 响应，但 proof 不可用：'+(parsed.unavailable.code||parsed.unavailable.type||'tee.proof_unavailable');
+    }else{
+      $('loadMsg').textContent='⚠️ 已识别 multipart 响应，但 proof 段缺失或无效';
+    }
+    refreshLoad();
+    return true;
+  }
+  const normalized=await normalizePastedBodyBytes(parsed.bodyBytes,parsed.proof,!!parsed.tail);
+  loaded={v:2,responseBody_b64:bytesToB64(normalized.bodyBytes),proof:parsed.proof,_source:'multipart'};
+  partialProof=null;
+  const gotPcr0=adoptExpectedPcr0(parsed.proof);
+  const ignored=normalized.ignoredLeadingBytes?('，已忽略粘贴开头 '+normalized.ignoredLeadingBytes+' 字节空行'):'';
+  $('loadMsg').textContent='已识别 multipart 响应'+ignored+(gotPcr0?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0');
+  refreshLoad();
+  return true;
+}
 function loadSseBytes(bytes){
   const parsed=parseProofEventBytes(bytes);
   if(!parsed)return false;
@@ -1218,12 +1548,13 @@ function loadSseBytes(bytes){
   refreshLoad();
   return true;
 }
-function ingestBytes(bytes){
-  try{ if(loadSseBytes(bytes))return; }catch(e){$('loadMsg').textContent='⚠️ tee.proof 解析失败：'+e.message;return;}
-  ingest(td.decode(bytes));
+async function ingestBytes(bytes){
+  try{ if(await loadMultipartBytes(bytes))return; if(loadSseBytes(bytes))return; }catch(e){$('loadMsg').textContent='⚠️ tee.proof 解析失败：'+e.message;return;}
+  await ingest(td.decode(bytes));
 }
-function ingest(text){
-  try{ if(loadSseText(text))return; }catch(e){$('loadMsg').textContent='⚠️ tee.proof 解析失败：'+e.message;return;}
+async function ingest(text){
+  const bytes=te.encode(text);
+  try{ if(await loadMultipartBytes(bytes))return; if(loadSseText(text))return; }catch(e){$('loadMsg').textContent='⚠️ tee.proof 解析失败：'+e.message;return;}
   const looseProof=parseLooseProofData(text);
   if(looseProof){
     partialProof=looseProof; loaded=null;
@@ -1426,20 +1757,47 @@ async function runVerification(){
   const v=$('verdict');
   const host=(working.proof&&working.proof.upstream_host)||'(未知 host)';
   const servedModel=extractServedModel(working.responseBody_b64);
-  const modelLine=servedModel?'<div class="vmodel">🤖 本次实际服务的型号:<b>'+servedModel.replace(/[<&]/g,c=>c==='<'?'&lt;':'&amp;')+'</b><span> —— 随响应一起签名、不可篡改</span></div>':'';
+  const maskedMessageId=maskMessageId(extractMessageId(working.responseBody_b64));
+  const verifiedAt=formatLocalVerifyTime();
   if(!res.ok){
     const bad=res.stages.filter(s=>!s.ok).map(s=>'段'+s.key+' '+s.title).join('、');
     v.className='verdict bad';
     v.innerHTML='❌ 当场识破 —— 这条响应<b>不可信,别用</b>。<span class="small">推导断在:'+bad+'。真实场景中即对应中转方在该段动了手脚 —— 上方那段回答可能不是官方模型原话、或被篡改过。</span>';
   }else if(res.mode==='proof-only'){
     v.className='verdict warn';
-    v.innerHTML='✅ 证明材料通过 · ⚠️ 缺响应正文 —— 真TEE签发 · 来自 <b>'+host+'</b>。'+modelLine+'<span class="small">已验证:attestation 链到 AWS 根、PCR0 匹配审计值、公钥被背书、nonce 绑定、Ed25519 声明签名通过。<br>· 但你只贴了 tee.proof data,没有贴前面的 SSE 响应正文;因此只能确认“TEE签过这个 response_body_sha256”,不能重算正文哈希来证明你看到的响应一字未改。<br>· 叶证书已过期时,真实性仍成立,新鲜性只能作为警告。</span>';
+    v.innerHTML='✅ 证明材料通过 · ⚠️ 缺响应正文 —— 真TEE签发 · 来自 <b>'+escHtml(host)+'</b>。<span class="small">已验证:attestation 链到 AWS 根、PCR0 匹配审计值、公钥被背书、nonce 绑定、Ed25519 声明签名通过。<br>· 但你只贴了 tee.proof data,没有贴前面的 SSE 响应正文;因此只能确认“TEE签过这个 response_body_sha256”,不能重算正文哈希来证明你看到的响应一字未改。<br>· 叶证书已过期时,真实性仍成立,新鲜性只能作为警告。</span>';
   }else if(res.fresh==='expired'){
-    v.className='verdict warn';
-    v.innerHTML='✅ 真实 · ⚠️ 但不保新鲜 —— 真TEE签发 · 来自 <b>'+host+'</b> · 未被篡改。'+modelLine+'<span class="small">逐关校验已成立:attestation 链到 AWS 根、PCR0 匹配审计值、公钥被背书、nonce 绑定、响应签名与哈希通过。上方回答是官方模型原文,一字没改。<br>· 仅 leaf 证书已过期 → 没法确认这是「近期/本次」响应(真实性不受影响;想连新鲜性一起确认,在调用后 ~几小时内验)。</span>';
+    v.className='verdict warn trust-summary';
+    v.innerHTML=renderTrustSummary({
+      kind:'warn',
+      title:'真实,但不保新鲜',
+      leadPrefix:'你看到的内容没有被改过，并确认来自 ',
+      host,
+      model:servedModel,
+      messageId:maskedMessageId,
+      verifiedAt,
+      pcr0:res.pcr0,
+      integrity:'正文 hash 匹配',
+      environment:'TEE 已验证',
+      hashCheck:'你收到的正文 hash 与签名值一致，所以内容未被篡改',
+      note:'Message ID 已脱敏，仅用于区分本次响应。仅 leaf 证书已过期：真实性仍成立，但不能确认这是近期响应。想连新鲜性一起确认，请在调用后几小时内验证。'
+    });
   }else{
-    v.className='verdict ok';
-    v.innerHTML='✅ 这条回答可信 —— 真TEE签发 · 来自 <b>'+host+'</b> · 未被篡改。'+modelLine+'<span class="small"><b>上方那段回答就是官方模型的原文,一字没动。</b> 三段推导从信任锚一路垒上来:段A 远程证明(链到 AWS 根)→ 可信 payload;段B TEE身份(PCR0+公钥+nonce)→ 可信签名钥;段C 本次响应(验签+正文哈希)→ 可信回答。</span>';
+    v.className='verdict ok trust-summary';
+    v.innerHTML=renderTrustSummary({
+      kind:'ok',
+      title:'验证通过：来源与内容完整性已确认',
+      leadPrefix:'你看到的内容没有被改过，并确认来自 ',
+      host,
+      model:servedModel,
+      messageId:maskedMessageId,
+      verifiedAt,
+      pcr0:res.pcr0,
+      integrity:'正文 hash 匹配',
+      environment:'TEE 已验证',
+      hashCheck:'你收到的正文 hash 与签名值一致，所以内容未被篡改',
+      note:'Message ID 已脱敏，仅用于区分本次响应。模型来自响应正文，来源来自 proof；二者都被 TEE 签名覆盖，无法在验证通过后单独篡改。'
+    });
   }
   glossify(v);
   v.style.display='block';
