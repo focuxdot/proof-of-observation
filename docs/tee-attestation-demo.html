@@ -22,6 +22,8 @@
   section{margin-top:52px}
   .quote{font-size:20px;font-weight:600;line-height:1.5;border-left:3px solid var(--accent);padding:6px 0 6px 18px;margin:18px 0}
   .quote .hl{color:var(--accent)}
+  .lead{font-size:16.5px;font-weight:500;color:var(--txt);line-height:1.72;margin:2px 0 22px;max-width:780px}
+  .lead .hl{color:var(--accent);font-weight:700}
   code,.mono{font-family:var(--mono)}
 
   /* language toggle */
@@ -224,6 +226,7 @@
 <!-- ===== 原理 · 三拍 ===== -->
 <section>
   <h2 data-i18n="h2_principle">原理 · 三拍讲完</h2>
+  <p class="lead" data-i18n="lead_metaphor">原理不复杂：在中转出口放一个中转方改不动、也伪造不了的硬件<span class="hl">“见证人”</span>，让它亲自跟官方对接、再签字证明“这段响应是从官方原样取回、没被改过的”。</p>
   <div class="beats">
     <div class="beat b1">
       <div class="bn">1</div>
@@ -236,11 +239,11 @@
       <div class="bn">2</div>
       <div class="bb">
         <div class="bt" data-i18n="p2_t">办法 · 一句话</div>
-        <div class="bd" data-i18n="p2_d">把中转的核心逻辑塞进一个<b>硬件保险箱（TEE）</b>。箱子的厂商（AWS）能出具一张<b>硬件签名的“出生证”</b>，上面写两件事：① 箱子里跑的是哪段代码（<code>PCR0</code> 指纹）；② 箱子这次开机<b>随机生成的签名公钥</b>。之后箱子用这把钥给每条响应签名。于是你不再信运营方，只需核三件事：</div>
+        <div class="bd" data-i18n="p2_d">在出口放一个硬件<b>“见证人”（TEE）</b>。它<b>亲自跟官方建立加密连接、原样取回响应</b>，再给每条响应<b>签字</b>。而它的厂商（AWS）出具一张<b>硬件签名的“身份证明”</b>，上面写两件事：① 这见证人跑的是哪段代码（<code>PCR0</code> 指纹）；② 它这次开机<b>随机生成的签名公钥</b>。于是你不再信运营方，只需核三件事：</div>
         <div class="bchecks">
-          <div class="bc" data-i18n="p2_c1"><b>代码指纹 == 公开审计源码</b>（而源码写死“只调官方”）→ 没偷换模型</div>
-          <div class="bc" data-i18n="p2_c2"><b>响应签名能用出生证里那把公钥验通过</b> → 没被改、出自这箱子</div>
-          <div class="bc" data-i18n="p2_c3"><b>出生证本身链到 AWS 根</b> → 这箱子是真 AWS 硬件，非伪造</div>
+          <div class="bc" data-i18n="p2_c1"><b>代码指纹 == 公开审计源码</b>（而源码写死“只调官方、原样转发”）→ 见证人不会偷换、乱改</div>
+          <div class="bc" data-i18n="p2_c2"><b>响应签名能用身份证明里那把公钥验通过</b> → 这段响应确实出自见证人之手、一字未改</div>
+          <div class="bc" data-i18n="p2_c3"><b>身份证明本身链到 AWS 根</b> → 这见证人是真 AWS 硬件，冒充不了</div>
         </div>
       </div>
     </div>
@@ -248,7 +251,7 @@
       <div class="bn">3</div>
       <div class="bb">
         <div class="bt" data-i18n="p3_t">焊点 · 为什么绕不过去</div>
-        <div class="bd" data-i18n="p3_d">关键一步：<b>那把签名公钥，是被写进出生证、和代码指纹一起被 AWS 签的</b>。于是“代码是诚实的”和“这把钥属于那个诚实箱子”焊成一条链——运营方自造一把钥签便宜货？<b>那把钥不在任何 AWS 出生证里，你根本不认。</b></div>
+        <div class="bd" data-i18n="p3_d">关键一步：<b>那把签名公钥，是和代码指纹一起被写进身份证明、由 AWS 签的</b>。于是“见证人是诚实的（代码可审计）”和“这把钥属于那个诚实见证人”焊成一条链——运营方想自造一把钥、签段假响应冒充见证人？<b>那把钥不在任何 AWS 身份证明里，你根本不认。</b></div>
       </div>
     </div>
   </div>
@@ -256,7 +259,7 @@
 
 <!-- ===== 两个支柱 ===== -->
 <section>
-  <h2 data-i18n="h2_facts">它靠两个独立的支柱，缺一不可</h2>
+  <h2 data-i18n="h2_facts">见证人靠两个独立的支柱，缺一不可</h2>
   <div class="facts">
     <div class="card sig">
       <span class="tag" data-i18n="tagA">支柱 A · 签名</span>
@@ -441,15 +444,16 @@ const EN = {
   sub1: `Proof of Observation verification principle · TEE remote attestation + response signing`,
   quote: `The whole mechanism answers one question:<br>how can you <span class="hl">verify a relay's output</span> without having to <span class="hl">trust the operator as a person</span>?<br><span class="hl">Don't trust, verify.</span>`,
   h2_principle: `The principle — in three beats`,
+  lead_metaphor: `The idea is simple: at the relay's egress, place a hardware <span class="hl">"witness"</span> the operator can neither alter nor forge — it talks to the official API itself, then signs a statement that "this response was fetched from the official source, unchanged."`,
   p1_t: `The problem`,
   p1_d: `You use a relay to call OpenAI. The operator controls the server: they can <b>swap in a cheaper model</b>, <b>edit the answer you get</b>, or tamper in transit. How would you know they didn't? Until now — you could only trust them as a person.`,
   p2_t: `The fix · in one sentence`,
-  p2_d: `Run the relay's core inside a <b>hardware box (a TEE)</b>. The box's vendor (AWS) can issue a <b>hardware-signed “birth certificate”</b> stating two things: ① which code runs inside (its <code>PCR0</code> fingerprint); ② the <b>signing public key the box randomly generated</b> this boot. The box then signs every response with that key. So you stop trusting the operator and just check three things:`,
-  p2_c1: `<b>code fingerprint == public audited source</b> (which hard-codes “only call the official API”) → no model swap`,
-  p2_c2: `<b>the response signature verifies with the public key in the certificate</b> → unaltered, and from this box`,
-  p2_c3: `<b>the certificate itself chains to the AWS root</b> → this box is genuine AWS hardware, not a forgery`,
+  p2_d: `Put a hardware <b>“witness” (a TEE)</b> at the egress. It <b>opens its own encrypted connection to the official API and fetches the response as-is</b>, then <b>signs</b> every response. Its vendor (AWS) issues a <b>hardware-signed “credential”</b> stating two things: ① which code the witness runs (its <code>PCR0</code> fingerprint); ② the <b>signing public key it randomly generated</b> this boot. So you stop trusting the operator and just check three things:`,
+  p2_c1: `<b>code fingerprint == public audited source</b> (which hard-codes “only call the official API, forward as-is”) → the witness can't swap or edit`,
+  p2_c2: `<b>the response signature verifies with the public key in the credential</b> → this response truly passed through the witness, not a byte changed`,
+  p2_c3: `<b>the credential itself chains to the AWS root</b> → this witness is genuine AWS hardware, impossible to impersonate`,
   p3_t: `The weld · why it can't be bypassed`,
-  p3_d: `The key step: <b>that signing public key is written into the certificate and signed by AWS together with the code fingerprint</b>. So “the code is honest” and “this key belongs to that honest box” are welded into one chain — the operator makes their own key and signs a cheap response? <b>That key is in no AWS certificate, so you simply don't honor it.</b>`,
+  p3_d: `The key step: <b>that signing public key is written into the credential and signed by AWS together with the code fingerprint</b>. So “the witness is honest (auditable code)” and “this key belongs to that honest witness” are welded into one chain — the operator makes their own key and signs a fake response to impersonate the witness? <b>That key is in no AWS credential, so you simply don't honor it.</b>`,
   an_t: `This is just HTTPS — which you already understand`,
   an_sub: `You never know a website's public key in advance, but you trust the CA root; the CA-signed certificate binds “identity ↔ public key”, and you just verify the certificate. This mechanism maps one-to-one:`,
   an_h2: `this mechanism`,
@@ -461,7 +465,7 @@ const EN = {
   an_k4: `website public key`,
   an_v4: `the box's random signing key`,
   an_edge: `A website can restart with a new key and reissue its certificate — you still verify; a TEE rebooting with a new key is the same. <b>Honest limit:</b> you haven't abolished trust, only moved it from “the operator as a person” to “AWS hardware + public code you can reproducibly build yourself”; and OpenAI doesn't sign its own responses, so “the official API genuinely produced this” reaches at most “the box observed it over real TLS”, never pure math.`,
-  h2_facts: `It rests on two independent pillars — neither alone is enough`,
+  h2_facts: `The witness rests on two independent pillars — neither alone is enough`,
   tagA: `Pillar A · Signature`,
   h3A: `Proves "this exchange wasn't altered"`,
   A1: `The TEE signs a <b>field-decomposed statement</b> with its internal private key: <code>upstream relay server / path / method / status + request-body hash + response-body hash</code>`,
