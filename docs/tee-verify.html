@@ -1019,7 +1019,7 @@ async function runChecks(bundle, trust, nonceField){
       '<p>想连签名一起验完整 bundle(需仓库 + tsx):</p>'+
       bundleSelf('看 <code>响应签名 ✅</code>,且 module/host 与你的一致')+
       '<p class="mlabel">③ 原理</p>'+
-      '<p class="mwhy">TEE签名覆盖的是<b>响应正文的 SHA-256</b>(不是正文本身——你的内容不出库)。你手里的字节重算哈希 == 被签名的哈希 ⟹ 一字未改。'+(servedModel?(' 实际型号 <b>'+esc(servedModel)+'</b>、'):' ')+'来自 host <b>'+esc(host)+'</b> 也随签名覆盖,不可篡改。</p>',
+      '<p class="mwhy">TEE签名覆盖的是<b>响应正文的 SHA-256</b>;proof 不携带正文本身,只携带这个哈希。你手里的字节重算哈希 == 被签名的哈希 ⟹ 一字未改。'+(servedModel?(' 实际型号 <b>'+esc(servedModel)+'</b>、'):' ')+'来自 host <b>'+esc(host)+'</b> 也随签名覆盖,不可篡改。</p>',
     verify:
       '<h3>步骤2 · 这份声明,真是段B 那把公钥签的吗?——Ed25519 验签</h3>'+
       '<p class="mlabel">① 解析结果</p>'+

@@ -1,5 +1,9 @@
 # TEE 签名载荷 v2 —— 自证内容(字段分解版 · 设计定稿)
 
+> ⚠️ **规范地位:本文是设计 rationale(为什么这么分字段),非规范文本。**
+> 规范以 [`proof-of-observation-protocol-v1.md`](proof-of-observation-protocol-v1.md)(RFC2119,实现无关)为准;
+> 字节布局/验证流程一旦与本文有出入,**以英文规范为准**。本文保留设计动机与取舍论证,便于查阅。
+
 > **状态:当前 v2 规范。** 签名域为 `tee-exchange-v2`;v1(monolithic `H(canon_req)`,
 > 域 `tee-relay-v1`)不在当前实现中使用。v2 从**用户验证**角度重做:
 > **不再把异构字段揉成一个哈希**,改为**按用户能独立核对的最小粒度分字段签**。
@@ -33,7 +37,7 @@ v1 的硬伤就是 `canon_req = method‖host‖path‖headers‖H(body)` 只签
 | ② 来源 / 没掉包 | 真发去**官方端点**、用我点的模型 | `upstream_host` + 响应里的 model |
 | ③ 是我的请求 | 回应对应我那条原始 prompt(没被改/注入) | `request_body_sha256` |
 | ④ 新鲜 | 不是旧响应重放 | `nonce` 绑 attestation + 证书有效期 |
-| —(不保) | **机密性**:不承诺,但正文绝不外泄 | 正文只签哈希 |
+| —(不保) | **机密性**:不承诺;proof 不携带正文 | 正文只签哈希 |
 
 ---
 
@@ -127,7 +131,7 @@ response-body-sha256=<hex>\n
 
 - **headers(请求头)**:**完全不进自证** —— 飞地不签、proof 不带、不进任何用户/审计核验路径。
   relay/飞地仍会向上游发**协议必需的头**(content-type、协议版本头、注入的 auth)让请求能跑,但**这些头不被签名、不外露**,在自证里**不留痕**。理由:headers 是 relay 元数据,用户没有参照、无从判断,签了也帮不了用户验证(残余风险见 §9)。
-- **prompt / 响应明文**:只签哈希(不承诺机密性,但绝不外泄正文)。
+- **prompt / 响应明文**:proof 只携带哈希、不携带正文;不承诺机密性,父实例/relay 仍可能短暂经手明文(见 [`TEE.md`](TEE.md) §2)。
 - **注入的 Authorization / api-key**:永远排除。
 - **飞地自报的时钟**:不可信 → 新鲜性一律挂 attestation 的 AWS 时间戳/短命证书,**不自签 timestamp**。
 - **实际拨号 IP / host:port**:**不签**(暴露上游 IP/区域、每请求变动、加噪);只签校验通过的 **host(名字)**。

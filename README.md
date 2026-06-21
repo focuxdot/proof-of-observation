@@ -3,6 +3,8 @@
 > Cryptographic proof that an API response is genuine — verifiable by the end user, **without
 > trusting the relay that served it**.
 
+[中文版](README.zh-CN.md)
+
 `proof-of-observation` is a reproducible **AWS Nitro Enclave** that sits at a relay's egress and
 turns *"trust me, this response is real"* into something a client can **check for itself**.
 
@@ -56,13 +58,23 @@ recomputable from public source** — not a number the operator asserts. The enc
 measured TCB lives in [`enclave/`](enclave); built twice with a pinned toolchain it yields a
 **byte-identical** PCR0. See [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
 
+## Specification
+
+The normative, implementation-independent protocol specification is
+[**`docs/proof-of-observation-protocol-v1.md`**](docs/proof-of-observation-protocol-v1.md)
+— the canonical signing statement, the attestation Evidence profile, the wire format, and the
+verification procedure, written with RFC 2119 requirement keywords so that independent
+implementations can interoperate. **That document is authoritative**; this README is an overview
+and the code is one conforming implementation of it.
+
 ## Repository layout
 
 | Path | What |
 |---|---|
 | [`enclave/`](enclave) | The measured Rust enclave — the trust-critical TCB that PCR0 measures |
 | [`verifier/`](verifier) | The proof verifier (TypeScript / JS) + golden test vectors |
-| [`docs/`](docs) | Architecture, the v2 signing spec, the reproducible-build procedure |
+| [`docs/proof-of-observation-protocol-v1.md`](docs/proof-of-observation-protocol-v1.md) | **Normative protocol specification** (RFC 2119) |
+| [`docs/`](docs) | Architecture, design rationale, the reproducible-build procedure |
 | [`docs/tee-verify.html`](docs/tee-verify.html) | A self-contained **browser verifier** — paste a response, verify locally |
 
 ## Verify a response

@@ -9,7 +9,8 @@ Ed25519 签名,并用 NSM attestation 把签名公钥 + PCR0 绑定到 AWS Nitro
 | 文档 | 内容 |
 |---|---|
 | 本文 | 总纲:架构 / 信任模型 / 怎么验 |
-| [`tee-signing-v2-design.md`](tee-signing-v2-design.md) | 签名声明(v2 字段分解)的逐字节规范 |
+| [`proof-of-observation-protocol-v1.md`](proof-of-observation-protocol-v1.md) | **规范文本**(RFC2119,实现无关):签名声明 / attestation / wire / 验证流程 —— **以此为准** |
+| [`tee-signing-v2-design.md`](tee-signing-v2-design.md) | 设计 rationale(为什么这么分字段),非规范 |
 | [`tee-reproducible-build.md`](tee-reproducible-build.md) | 从公开源复算 PCR0 的可复现构建 |
 | [`tee-verify.html`](tee-verify.html) | 浏览器端验证器(贴 SSE 即验) |
 | [`../enclave/README.md`](../enclave/README.md) | 飞地 crate(受度量 TCB) |
