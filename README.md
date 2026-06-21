@@ -85,7 +85,7 @@ and the code is one conforming implementation of it.
 | [`verifier/`](verifier) | The proof verifier (TypeScript / JS) + golden test vectors |
 | [`docs/proof-of-observation-protocol-v1.md`](docs/proof-of-observation-protocol-v1.md) | **Normative protocol specification** (RFC 2119) |
 | [`docs/`](docs) | Architecture, design rationale, the reproducible-build procedure |
-| [`docs/tee-verify.html`](docs/tee-verify.html) | A self-contained **browser verifier** — paste a response, verify locally |
+| [`docs/tee-verify.html`](docs/tee-verify.html) — [**open live ↗**](https://focuxdot.github.io/proof-of-observation/tee-verify.html) | A self-contained **browser verifier** — paste a response, verify locally |
 
 ## Verify a response
 
@@ -99,8 +99,9 @@ proof part and closing boundary are accepted too. Save the response capture, the
 npx tsx verifier/tee-verify-stream.ts captured-response --pcr0 <canonical-PCR0>
 ```
 
-…or open [`docs/tee-verify.html`](docs/tee-verify.html) in a browser and paste the capture — it
-verifies entirely on your machine. Full walkthrough: [`docs/TEE.md` §3](docs/TEE.md).
+…or open the **[live browser verifier ↗](https://focuxdot.github.io/proof-of-observation/tee-verify.html)**
+(source: [`docs/tee-verify.html`](docs/tee-verify.html) — the page served is byte-for-byte this file)
+and paste the capture — it verifies entirely on your machine. Full walkthrough: [`docs/TEE.md` §3](docs/TEE.md).
 
 ## Reproduce the PCR0
 

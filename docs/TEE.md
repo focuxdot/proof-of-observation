@@ -12,7 +12,7 @@ Ed25519 签名,并用 NSM attestation 把签名公钥 + PCR0 绑定到 AWS Nitro
 | [`proof-of-observation-protocol-v1.md`](proof-of-observation-protocol-v1.md) | **规范文本**(RFC2119,实现无关):签名声明 / attestation / wire / 验证流程 —— **以此为准** |
 | [`tee-signing-v2-design.md`](tee-signing-v2-design.md) | 设计 rationale(为什么这么分字段),非规范 |
 | [`tee-reproducible-build.md`](tee-reproducible-build.md) | 从公开源复算 PCR0 的可复现构建 |
-| [`tee-verify.html`](tee-verify.html) | 浏览器端验证器(贴 SSE 即验) |
+| [`tee-verify.html`](tee-verify.html) — [**在线打开 ↗**](https://focuxdot.github.io/proof-of-observation/tee-verify.html) | 浏览器端验证器(贴流式 SSE / 非流式 proof 响应即验) |
 | [`../enclave/README.md`](../enclave/README.md) | 飞地 crate(受度量 TCB) |
 | [`../verifier/README.md`](../verifier/README.md) | 验证侧 + golden 向量 |
 
@@ -41,8 +41,10 @@ Ed25519 签名,并用 NSM attestation 把签名公钥 + PCR0 绑定到 AWS Nitro
 
 ## 3. 客户端怎么验
 
-流式响应末尾自带一条 `event: tee.proof`。把整段响应存下来,用 [`tee-verify.html`](tee-verify.html)
-(浏览器、本地核对)或 `verifier/tee-verify-stream.ts`(CLI)逐关核:
+流式响应末尾自带一条 `event: tee.proof`;非流式 proof mode 可保存 `multipart/mixed`
+响应(第一段 raw response bytes,第二段 proof)。如果终端保存到的是 raw response body 后面直接接
+proof part 和 closing boundary,也可以使用。把响应材料存下来,用[**在线验证器 ↗**](https://focuxdot.github.io/proof-of-observation/tee-verify.html)
+(源码即 [`tee-verify.html`](tee-verify.html),在线页面逐字节一致、纯本地核对)或 `verifier/tee-verify-stream.ts`(CLI)逐关核:
 
 1. COSE/P-384 attestation 链到 **AWS Nitro 根**(根指纹你自己从 AWS 官网 pin)。
 2. PCR0 == 你从可复现构建复算 / 公布的值。
