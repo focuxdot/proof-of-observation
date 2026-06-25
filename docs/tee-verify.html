@@ -899,7 +899,9 @@ function parseProofEventBytes(bytes){
     p=nl+1;
   }
   if(!dataLines.length)return null;
-  if(eventEnd<0)return null;
+  // 容忍最后一个事件缺少结尾空行/换行:流末尾本身即终止该事件(SSE 规范),按 curl 落盘/终端复制常丢尾换行的现实放宽。
+  // 仅当未找到终止空行时把事件视作延伸到流末尾;若中途已找到空行后又出现非空白内容,仍按下方校验拒绝(tee.proof 必须是末事件)。
+  if(eventEnd<0)eventEnd=eventBlock.length;
   for(let i=eventEnd;i<eventBlock.length;i++)if(!isAsciiWhitespaceByte(eventBlock[i]))return null;
   const proof=JSON.parse(dataLines.join('\n'));
   if(!isProofWire(proof))throw new Error(typeof L==='function'?L('tee.proof data 字段不是有效证明材料','tee.proof data field is not valid proof material'):'tee.proof data 字段不是有效证明材料');

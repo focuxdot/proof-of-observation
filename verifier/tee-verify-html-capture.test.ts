@@ -266,6 +266,27 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
     expect(parsed).toBeNull();
   });
 
+  it('accepts a tee.proof event missing the trailing blank-line terminator (no final newline)', () => {
+    const body = 'event: message_start\ndata: {"type":"message_start"}\n\n';
+    // 末尾既无空行也无换行 —— 终端复制/curl 落盘常见;流末尾即终止事件。
+    const stream = `${body}event: tee.proof\ndata: ${JSON.stringify(proof)}`;
+
+    const parsed = parser.parseProofEventText(stream);
+
+    expect(parsed?.proof).toMatchObject(proof);
+    expect(Buffer.from(parsed!.bodyBytes).toString('utf8')).toBe(body);
+  });
+
+  it('accepts a tee.proof event ending with only trailing whitespace and no blank line', () => {
+    const body = 'event: message_start\ndata: {"type":"message_start"}\n\n';
+    const stream = `${body}event: tee.proof\ndata: ${JSON.stringify(proof)}   \n  `;
+
+    const parsed = parser.parseProofEventText(stream);
+
+    expect(parsed?.proof).toMatchObject(proof);
+    expect(Buffer.from(parsed!.bodyBytes).toString('utf8')).toBe(body);
+  });
+
   it('parses multipart captures while preserving the raw response part exactly', () => {
     const rawBody = Buffer.from('{"id":"msg_1","content":[{"type":"text","text":"ok"}]}\r\n', 'utf8');
     const capture = formatMultipart({
