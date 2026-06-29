@@ -62,6 +62,14 @@ struct Upstream {
     method: String,
     path: String,
     headers: BTreeMap<String, String>,
+    // Ordered, case-preserving outgoing header template. When present it takes
+    // precedence over `headers`: headers are emitted verbatim in this exact order
+    // and case. `authorization` / `content-length` entries are empty-value
+    // sentinels filled in here (token / actual body length). Loosely typed: each
+    // item must be exactly [name, value], otherwise it is rejected and the build
+    // falls back to the `headers` map path.
+    #[serde(default, rename = "headersOrdered")]
+    headers_ordered: Option<Vec<Vec<String>>>,
 }
 
 #[derive(Deserialize)]
@@ -146,6 +154,65 @@ fn build_v2_statement(
     out.push_str(&format!("request-body-sha256={}\n", request_body_sha256_hex));
     out.push_str(&format!("response-body-sha256={}\n", response_body_sha256_hex));
     out.into_bytes()
+}
+
+/// Validate the caller-provided ordered header template: each item must be exactly
+/// [name, value]; any malformed item yields None (caller falls back to the map path).
+fn parse_headers_ordered(v: &Option<Vec<Vec<String>>>) -> Option<Vec<(String, String)>> {
+    let arr = v.as_ref()?;
+    let mut out = Vec::with_capacity(arr.len());
+    for pair in arr {
+        if pair.len() != 2 {
+            return None;
+        }
+        out.push((pair[0].clone(), pair[1].clone()));
+    }
+    Some(out)
+}
+
+/// Assemble the HTTP/1.1 request head verbatim from the ordered template
+/// (exact order and case, no sorting, no lowercasing). The `authorization` slot is
+/// filled from the token (only if present); the `content-length` slot is filled with
+/// the actual body length (both are empty-value sentinels). `transfer-encoding` is
+/// stripped. Safety net: if the template omits host / content-length they are
+/// appended so the request stays well-formed. `connection` is NOT hard-coded here —
+/// it is carried by the template when provided.
+fn build_request_head_ordered(
+    norm_method: &str,
+    path: &str,
+    host: &str,
+    ordered: &[(String, String)],
+    token: Option<&str>,
+    body_len: usize,
+) -> String {
+    let mut s = format!("{} {} HTTP/1.1\r\n", norm_method, path);
+    let mut host_seen = false;
+    let mut clen_seen = false;
+    for (k, v) in ordered {
+        if k.eq_ignore_ascii_case("authorization") {
+            if let Some(t) = token {
+                s.push_str(&format!("{}: Bearer {}\r\n", k, t));
+            }
+        } else if k.eq_ignore_ascii_case("content-length") {
+            s.push_str(&format!("{}: {}\r\n", k, body_len));
+            clen_seen = true;
+        } else if k.eq_ignore_ascii_case("transfer-encoding") {
+            // strip: a fixed-length body must not carry TE (matches the map path)
+        } else {
+            if k.eq_ignore_ascii_case("host") {
+                host_seen = true;
+            }
+            s.push_str(&format!("{}: {}\r\n", k, v));
+        }
+    }
+    if !host_seen {
+        s.push_str(&format!("host: {}\r\n", host));
+    }
+    if !clen_seen {
+        s.push_str(&format!("content-length: {}\r\n", body_len));
+    }
+    s.push_str("\r\n");
+    s
 }
 
 struct Headers {
@@ -437,23 +504,39 @@ fn handle(
     };
 
     let norm_method = head.upstream.method.to_uppercase();
-    let mut req = format!("{} {} HTTP/1.1\r\n", norm_method, head.upstream.path);
-    req.push_str(&format!("host: {}\r\n", head.upstream.host));
-    for (k, v) in &head.upstream.headers {
-        let lk = k.to_lowercase();
-        if lk == "host" || lk == "authorization" || lk == "content-length" || lk == "connection"
-            || lk == "transfer-encoding" || lk == "te" || lk == "trailer" || lk == "upgrade"
-            || lk == "proxy-connection" || lk == "keep-alive"
-        {
-            continue;
+    // When an ordered header template is supplied, emit headers verbatim (exact
+    // order/case). Otherwise fall back to the map path (sorted + lowercased +
+    // connection: close), byte-identical to before.
+    let req = match parse_headers_ordered(&head.upstream.headers_ordered) {
+        Some(ordered) => build_request_head_ordered(
+            &norm_method,
+            &head.upstream.path,
+            &head.upstream.host,
+            &ordered,
+            head.token.as_deref(),
+            body.len(),
+        ),
+        None => {
+            let mut req = format!("{} {} HTTP/1.1\r\n", norm_method, head.upstream.path);
+            req.push_str(&format!("host: {}\r\n", head.upstream.host));
+            for (k, v) in &head.upstream.headers {
+                let lk = k.to_lowercase();
+                if lk == "host" || lk == "authorization" || lk == "content-length" || lk == "connection"
+                    || lk == "transfer-encoding" || lk == "te" || lk == "trailer" || lk == "upgrade"
+                    || lk == "proxy-connection" || lk == "keep-alive"
+                {
+                    continue;
+                }
+                req.push_str(&format!("{}: {}\r\n", k, v));
+            }
+            if let Some(tok) = &head.token {
+                req.push_str(&format!("authorization: Bearer {}\r\n", tok));
+            }
+            req.push_str(&format!("content-length: {}\r\n", body.len()));
+            req.push_str("connection: close\r\n\r\n");
+            req
         }
-        req.push_str(&format!("{}: {}\r\n", k, v));
-    }
-    if let Some(tok) = &head.token {
-        req.push_str(&format!("authorization: Bearer {}\r\n", tok));
-    }
-    req.push_str(&format!("content-length: {}\r\n", body.len()));
-    req.push_str("connection: close\r\n\r\n");
+    };
 
     tls.write_all(req.as_bytes())
         .map_err(|e| format!("TLS 写请求头失败: {}", e))?;
@@ -886,5 +969,76 @@ mod golden {
             );
             assert_eq!(hex(&stmt), c.expected.statement_hex, "v2 statement hex [{}]", c.name);
         }
+    }
+}
+
+// Ordered outgoing headers: emitted verbatim in the given order and case.
+#[cfg(test)]
+mod ordered_headers {
+    use super::{build_request_head_ordered, parse_headers_ordered};
+
+    fn s(x: &str) -> String {
+        x.to_string()
+    }
+
+    #[test]
+    fn ordered_emit_preserves_order_case_and_fills_sentinels() {
+        let ordered = vec![
+            (s("Accept"), s("application/json")),
+            (s("Authorization"), s("")), // empty sentinel -> filled from token
+            (s("User-Agent"), s("example-client/1.0")),
+            (s("Connection"), s("keep-alive")),
+            (s("Host"), s("api.example.com")),
+            (s("Content-Length"), s("")), // empty sentinel -> filled with body_len
+        ];
+        let text = build_request_head_ordered("POST", "/v1/messages?beta=true", "fallback", &ordered, Some("tok123"), 2);
+        let head = text.split("\r\n\r\n").next().unwrap();
+        let lines: Vec<&str> = head.split("\r\n").collect();
+        assert_eq!(lines[0], "POST /v1/messages?beta=true HTTP/1.1");
+        assert_eq!(
+            lines[1..].to_vec(),
+            vec![
+                "Accept: application/json",
+                "Authorization: Bearer tok123",
+                "User-Agent: example-client/1.0",
+                "Connection: keep-alive", // not connection: close
+                "Host: api.example.com",
+                "Content-Length: 2",
+            ]
+        );
+        assert!(text.ends_with("\r\n\r\n")); // head only; body written by caller
+        assert_eq!(text.matches("Content-Length").count(), 1);
+    }
+
+    #[test]
+    fn ordered_emit_strips_te_and_backfills_missing_host_and_clen() {
+        let ordered = vec![
+            (s("Accept"), s("application/json")),
+            (s("transfer-encoding"), s("chunked")), // stripped
+        ];
+        let text = build_request_head_ordered("POST", "/x", "host.example", &ordered, None, 3);
+        assert!(!text.to_lowercase().contains("transfer-encoding"));
+        assert!(text.contains("host: host.example\r\n")); // backfilled
+        assert!(text.contains("content-length: 3\r\n")); // backfilled
+        assert!(!text.to_lowercase().contains("authorization")); // no token -> omitted
+    }
+
+    #[test]
+    fn parse_headers_ordered_preserves_order() {
+        let v = Some(vec![
+            vec![s("B-Header"), s("1")],
+            vec![s("a-header"), s("2")],
+        ]);
+        assert_eq!(
+            parse_headers_ordered(&v).unwrap(),
+            vec![(s("B-Header"), s("1")), (s("a-header"), s("2"))]
+        );
+    }
+
+    #[test]
+    fn parse_headers_ordered_rejects_malformed_and_missing() {
+        assert!(parse_headers_ordered(&None).is_none());
+        assert!(parse_headers_ordered(&Some(vec![vec![s("only-one")]])).is_none());
+        assert!(parse_headers_ordered(&Some(vec![vec![s("a"), s("b"), s("c")]])).is_none());
     }
 }

@@ -61,7 +61,7 @@ measured TCB lives in [`enclave/`](enclave); built twice with a pinned toolchain
 **Canonical PCR0** of the current release:
 
 ```
-eb853fd0590876c37224862d1ac15d08b75be9ce400baa83cab0af04c8369d8abf0ef21fe5edfb53eeb38dce94dce8c1
+aa173b92517ce75c280572d9e2fadfd21ba74dc8acb334aef44d88ce66e4f12a7eb5f950784f19af62e95d3bf5539bc2
 ```
 
 This is the value to compare against — but **don't take it on trust**: reproduce it yourself

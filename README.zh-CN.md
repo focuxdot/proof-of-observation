@@ -55,7 +55,7 @@ enclave 的完整受度量 TCB 位于 [`enclave/`](enclave)；在固定工具链
 **当前发布版的规范 PCR0：**
 
 ```
-eb853fd0590876c37224862d1ac15d08b75be9ce400baa83cab0af04c8369d8abf0ef21fe5edfb53eeb38dce94dce8c1
+aa173b92517ce75c280572d9e2fadfd21ba74dc8acb334aef44d88ce66e4f12a7eb5f950784f19af62e95d3bf5539bc2
 ```
 
 这是你比对的目标值 —— 但**别只信这个数**：自己复现它（见下文「复现 PCR0」），再和运行中 enclave 的
