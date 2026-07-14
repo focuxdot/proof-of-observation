@@ -58,15 +58,20 @@ recomputable from public source** — not a number the operator asserts. The enc
 measured TCB lives in [`enclave/`](enclave); built twice with a pinned toolchain it yields a
 **byte-identical** PCR0.
 
-**Canonical PCR0** of the current release:
+**Canonical PCR0 of the current production release:**
 
 ```
 8857f92b74236ce27b2989cd65d43188836e6057f1196d5be13f9868a749a8e9009d54e762d8e458587d9b213bd9e534
 ```
 
-This is the value to compare against — but **don't take it on trust**: reproduce it yourself
-(*Reproduce the PCR0*, below) and check it against a running enclave's attestation. Full
-procedure: [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
+This production value corresponds to source revision `3dfb01b73570fb25d99c2f84ff368f85abcfb599`.
+The Grok-capable source changes are for the next release at measured-source revision
+`19122df6e69d4256e84eb5cf5c875ec4a197bab3`. The post-streaming-fix source was built
+twice from an empty builder cache on the production aarch64 build host and both builds produced
+candidate PCR0 `4bec69861c775a59278f2775f7e7eda8bf4a8c8b15c039c31dd675591e6054b7be5609ba8dcd716f330f6242b23ea8af`.
+It is **not** the production trust anchor until the EIF is switched and live attestation is
+verified. The earlier `650d3f81…a572` candidate remains invalid
+and was never deployed. Full procedure: [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
 
 ## Specification
 
@@ -111,10 +116,11 @@ cd enclave
 bash reproducible-build.sh        # double --no-cache build → two byte-identical PCR0s
 ```
 
-Compare the result against the canonical value in
-[`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md) **and** against a running
-enclave's attestation. A three-way match (your build == doc == live attestation) proves the
-running enclave is compiled from exactly this source, with nothing smuggled in.
+To reproduce the current production value, first check out revision
+`3dfb01b73570fb25d99c2f84ff368f85abcfb599`, then compare the result against the canonical value
+in [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md) **and** against a running
+enclave's attestation. The next release must replace both the documented value and revision only
+after its final source has passed the same double-build and live-attestation ceremony.
 
 > Requires an `aarch64` host with Docker + the AWS Nitro CLI (pinned versions in the doc).
 

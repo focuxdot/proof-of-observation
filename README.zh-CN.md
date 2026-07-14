@@ -52,14 +52,18 @@
 整个方案的承重墙是：客户端比对的 PCR0 必须能从公开源代码**独立复算**，而不是运营方单方面声称的数字。
 enclave 的完整受度量 TCB 位于 [`enclave/`](enclave)；在固定工具链下双构会得到**逐字节一致**的 PCR0。
 
-**当前发布版的规范 PCR0：**
+**当前生产发布版的规范 PCR0：**
 
 ```
 8857f92b74236ce27b2989cd65d43188836e6057f1196d5be13f9868a749a8e9009d54e762d8e458587d9b213bd9e534
 ```
 
-这是你比对的目标值 —— 但**别只信这个数**：自己复现它（见下文「复现 PCR0」），再和运行中 enclave 的
-attestation 比对。完整流程见 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md)。
+该生产值对应源码 revision `3dfb01b73570fb25d99c2f84ff368f85abcfb599`。Grok 支持源码属于下一发布版，
+受度量源码 revision 为 `19122df6e69d4256e84eb5cf5c875ec4a197bab3`；流式修复后的源码已在生产 aarch64
+构建机清空缓存双构，两次均得到候选 PCR0
+`4bec69861c775a59278f2775f7e7eda8bf4a8c8b15c039c31dd675591e6054b7be5609ba8dcd716f330f6242b23ea8af`。
+它在 EIF 切换与线上 attestation 核验前仍不是生产信任锚；此前的 `650d3f81…a572` 已作废且从未上线。
+完整流程见 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md)。
 
 ## 协议规范
 
@@ -102,9 +106,9 @@ cd enclave
 bash reproducible-build.sh        # double --no-cache build → two byte-identical PCR0s
 ```
 
-把结果与 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md) 中的 canonical value
-以及运行中 enclave 的 attestation 进行比对。三者一致
-（你的构建 == 文档 == live attestation）就能证明运行中的 enclave 正是由这份源码编译而来，没有夹带内容。
+复现当前生产值时，先 checkout `3dfb01b73570fb25d99c2f84ff368f85abcfb599`，再把结果与
+[`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md) 的 canonical value 以及运行中 enclave 的
+attestation 比对。下一发布版只有在最终源码双构和线上 attestation 切换完成后，才同时更新文档值和 revision。
 
 > 需要 `aarch64` 主机、Docker 和 AWS Nitro CLI（固定版本见文档）。
 
