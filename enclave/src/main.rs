@@ -8,7 +8,7 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore};
 use serde::Deserialize;
 use serde_bytes::ByteBuf;
-use serde_json::json;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::{ErrorKind, Read, Write};
@@ -22,6 +22,8 @@ use vsock::{VsockAddr, VsockListener, VsockStream};
 
 mod egress_boring;
 mod egress_openssl;
+mod egress_rustls_aws_lc;
+mod h2_client;
 use attest::tls_profile;
 
 trait ReadWrite: Read + Write {}
@@ -90,7 +92,10 @@ fn read_frame<R: Read>(r: &mut R, max: usize) -> std::io::Result<(u8, Vec<u8>)> 
     let t = hdr[0];
     let n = u32::from_be_bytes([hdr[1], hdr[2], hdr[3], hdr[4]]) as usize;
     if n > max {
-        return Err(std::io::Error::new(ErrorKind::InvalidData, "请求帧超过上限"));
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "请求帧超过上限",
+        ));
     }
     let mut buf = vec![0u8; n];
     r.read_exact(&mut buf)?;
@@ -104,6 +109,37 @@ fn write_frame<W: Write>(w: &mut W, t: u8, data: &[u8]) -> std::io::Result<()> {
     w.write_all(&hdr)?;
     w.write_all(data)?;
     Ok(())
+}
+
+struct AttestedH2Sink<'a> {
+    control: &'a mut VsockStream,
+    hasher: Sha256,
+    content_type: String,
+}
+
+impl h2_client::H2ResponseSink for AttestedH2Sink<'_> {
+    fn on_head(&mut self, status: u16, headers: &[(String, String)]) -> Result<(), String> {
+        let mut response_headers = serde_json::Map::new();
+        for (name, value) in headers {
+            if name.eq_ignore_ascii_case("content-type") {
+                self.content_type = value.clone();
+            }
+            response_headers.insert(name.clone(), Value::String(value.clone()));
+        }
+        write_frame(
+            self.control,
+            RESP_HEAD,
+            json!({ "status": status, "headers": Value::Object(response_headers) })
+                .to_string()
+                .as_bytes(),
+        )
+        .map_err(|e| format!("写 h2 RESP_HEAD: {e}"))
+    }
+
+    fn on_chunk(&mut self, chunk: &[u8]) -> Result<(), String> {
+        self.hasher.update(chunk);
+        write_frame(self.control, RESP_CHUNK, chunk).map_err(|e| format!("写 h2 RESP_CHUNK: {e}"))
+    }
 }
 
 fn hex(b: &[u8]) -> String {
@@ -151,8 +187,14 @@ fn build_v2_statement(
     out.push_str(&format!("http-method={}\n", http_method.to_uppercase()));
     out.push_str(&format!("http-status={}\n", http_status));
     out.push_str(&format!("resp-content-type={}\n", resp_content_type));
-    out.push_str(&format!("request-body-sha256={}\n", request_body_sha256_hex));
-    out.push_str(&format!("response-body-sha256={}\n", response_body_sha256_hex));
+    out.push_str(&format!(
+        "request-body-sha256={}\n",
+        request_body_sha256_hex
+    ));
+    out.push_str(&format!(
+        "response-body-sha256={}\n",
+        response_body_sha256_hex
+    ));
     out.into_bytes()
 }
 
@@ -298,7 +340,9 @@ fn stream_chunked<R: Read + ?Sized, F: FnMut(&[u8]) -> Result<(), String>>(
             if let Some(p) = find(&buf, b"\r\n") {
                 break p;
             }
-            let n = tls.read(&mut tmp).map_err(|e| format!("读 chunk 头失败: {}", e))?;
+            let n = tls
+                .read(&mut tmp)
+                .map_err(|e| format!("读 chunk 头失败: {}", e))?;
             if n == 0 {
                 return Err("chunked 提前 EOF".into());
             }
@@ -323,7 +367,9 @@ fn stream_chunked<R: Read + ?Sized, F: FnMut(&[u8]) -> Result<(), String>>(
             return Err("响应体超过上限".into());
         }
         while buf.len() < size + 2 {
-            let n = tls.read(&mut tmp).map_err(|e| format!("读 chunk 体失败: {}", e))?;
+            let n = tls
+                .read(&mut tmp)
+                .map_err(|e| format!("读 chunk 体失败: {}", e))?;
             if n == 0 {
                 break;
             }
@@ -429,6 +475,62 @@ fn attest(fd: i32, lock: &Mutex<()>, spki: &[u8], nonce: &[u8]) -> Result<Vec<u8
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn write_attested_trailer(
+    s: &mut VsockStream,
+    sk: &SigningKey,
+    spki: &[u8],
+    nsm_fd: i32,
+    nsm_lock: &Mutex<()>,
+    m: &Metrics,
+    head: &ReqHead,
+    nonce_bytes: &[u8],
+    norm_method: &str,
+    status: u16,
+    content_type: &str,
+    req_body_hex: &str,
+    resp_body_hex: &str,
+) -> Result<(), String> {
+    if !no_crlf(content_type) {
+        return Err("上游 content-type 含非法 CR/LF".into());
+    }
+    let norm_host = head.upstream.host.to_lowercase();
+    let norm_path = path_no_query(&head.upstream.path).to_string();
+    let statement = build_v2_statement(
+        &head.nonce,
+        &norm_host,
+        &norm_path,
+        norm_method,
+        status,
+        content_type,
+        req_body_hex,
+        resp_body_hex,
+    );
+    let sig = sk.sign(&statement).to_bytes();
+    let t_nsm = Instant::now();
+    let doc = attest(nsm_fd, nsm_lock, spki, nonce_bytes)?;
+    m.nsm_ns_total
+        .fetch_add(t_nsm.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    m.nsm_calls.fetch_add(1, Ordering::Relaxed);
+    let trailer = json!({
+        "v": 2,
+        "alg": "ed25519",
+        "public_key": B64.encode(spki),
+        "nonce": head.nonce,
+        "upstream_host": norm_host,
+        "upstream_path": norm_path,
+        "http_method": norm_method,
+        "http_status": status,
+        "resp_content_type": content_type,
+        "request_body_sha256": req_body_hex,
+        "response_body_sha256": resp_body_hex,
+        "signature": B64.encode(sig),
+        "attestation": B64.encode(&doc),
+    });
+    write_frame(s, RESP_TRAILER, trailer.to_string().as_bytes())
+        .map_err(|e| format!("写 RESP_TRAILER: {e}"))
+}
+
 fn handle(
     s: &mut VsockStream,
     sk: &SigningKey,
@@ -480,21 +582,107 @@ fn handle(
         .map_err(|e| format!("连 vsock-proxy 失败: {}", e))?;
     sock.set_read_timeout(Some(UPSTREAM_IO_TIMEOUT)).ok();
     sock.set_write_timeout(Some(UPSTREAM_IO_TIMEOUT)).ok();
+    let norm_method = head.upstream.method.to_uppercase();
+    if profile.as_ref().map(|p| p.stack) == Some(tls_profile::Stack::RustlsAwsLc) {
+        let profile = profile.as_ref().unwrap();
+        let mut tls = egress_rustls_aws_lc::connect(profile, sock, &head.upstream.host)
+            .map_err(|e| format!("rustls/aws-lc 出口: {e}"))?;
+        while tls.conn.is_handshaking() {
+            tls.conn
+                .complete_io(&mut tls.sock)
+                .map_err(|e| format!("rustls/aws-lc handshake: {e}"))?;
+        }
+        if tls.conn.alpn_protocol() != Some(b"h2") {
+            return Err(format!(
+                "Grok upstream did not negotiate h2: {:?}",
+                tls.conn.alpn_protocol()
+            ));
+        }
+        tls.sock
+            .set_read_timeout(Some(Duration::from_millis(250)))
+            .ok();
+        let h2 = profile
+            .h2
+            .as_ref()
+            .ok_or_else(|| "Grok profile missing h2 fingerprint".to_string())?;
+        let ordered = parse_headers_ordered(&head.upstream.headers_ordered).unwrap_or_else(|| {
+            head.upstream
+                .headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        });
+        let (response, resp_body_hex, content_type) = {
+            let mut sink = AttestedH2Sink {
+                control: s,
+                hasher: Sha256::new(),
+                content_type: String::new(),
+            };
+            let response = h2_client::execute(
+                tls,
+                h2,
+                &head.upstream.host,
+                &norm_method,
+                &head.upstream.path,
+                &ordered,
+                head.token.as_deref(),
+                &body,
+                MAX_RESP,
+                &mut sink,
+            )?;
+            let resp_body_hex = hex(&sink.hasher.finalize());
+            (response, resp_body_hex, sink.content_type)
+        };
+        m.resp_bytes_total
+            .fetch_add(response.body_bytes as u64, Ordering::Relaxed);
+        write_attested_trailer(
+            s,
+            sk,
+            spki,
+            nsm_fd,
+            nsm_lock,
+            m,
+            &head,
+            &nonce_bytes,
+            &norm_method,
+            response.status,
+            &content_type,
+            &req_body_hex,
+            &resp_body_hex,
+        )?;
+        return Ok(());
+    }
     let mut tls: Box<dyn ReadWrite> = match profile.as_ref().map(|p| p.stack) {
         Some(tls_profile::Stack::Boring) => Box::new(
-            egress_boring::connect(profile.as_ref().unwrap(), sock, &head.upstream.host, seed.as_deref())
-                .map_err(|e| format!("btls 出口: {}", e))?,
+            egress_boring::connect(
+                profile.as_ref().unwrap(),
+                sock,
+                &head.upstream.host,
+                seed.as_deref(),
+            )
+            .map_err(|e| format!("btls 出口: {}", e))?,
         ),
         Some(tls_profile::Stack::OpenSsl) => Box::new(
-            egress_openssl::connect(profile.as_ref().unwrap(), sock, &head.upstream.host, seed.as_deref())
-                .map_err(|e| format!("openssl 出口: {}", e))?,
+            egress_openssl::connect(
+                profile.as_ref().unwrap(),
+                sock,
+                &head.upstream.host,
+                seed.as_deref(),
+            )
+            .map_err(|e| format!("openssl 出口: {}", e))?,
         ),
+        Some(tls_profile::Stack::RustlsAwsLc) => unreachable!("handled by h2 branch"),
         _ => {
             let mut roots = RootCertStore::empty();
             roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            let config = ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
+            // 两个 provider 同时编入后必须显式选 ring；保持历史无画像兜底逐字节不变。
+            let config = ClientConfig::builder_with_provider(Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .map_err(|e| format!("rustls/ring versions: {}", e))?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
             let server_name = ServerName::try_from(head.upstream.host.clone())
                 .map_err(|e| format!("SNI 非法: {:?}", e))?;
             let conn = ClientConnection::new(Arc::new(config), server_name)
@@ -503,7 +691,6 @@ fn handle(
         }
     };
 
-    let norm_method = head.upstream.method.to_uppercase();
     // When an ordered header template is supplied, emit headers verbatim (exact
     // order/case). Otherwise fall back to the map path (sorted + lowercased +
     // connection: close), byte-identical to before.
@@ -521,9 +708,16 @@ fn handle(
             req.push_str(&format!("host: {}\r\n", head.upstream.host));
             for (k, v) in &head.upstream.headers {
                 let lk = k.to_lowercase();
-                if lk == "host" || lk == "authorization" || lk == "content-length" || lk == "connection"
-                    || lk == "transfer-encoding" || lk == "te" || lk == "trailer" || lk == "upgrade"
-                    || lk == "proxy-connection" || lk == "keep-alive"
+                if lk == "host"
+                    || lk == "authorization"
+                    || lk == "content-length"
+                    || lk == "connection"
+                    || lk == "transfer-encoding"
+                    || lk == "te"
+                    || lk == "trailer"
+                    || lk == "upgrade"
+                    || lk == "proxy-connection"
+                    || lk == "keep-alive"
                 {
                     continue;
                 }
@@ -550,7 +744,9 @@ fn handle(
     write_frame(
         s,
         RESP_HEAD,
-        json!({ "status": h.status, "headers": h.headers }).to_string().as_bytes(),
+        json!({ "status": h.status, "headers": h.headers })
+            .to_string()
+            .as_bytes(),
     )
     .map_err(|e| format!("写 RESP_HEAD: {}", e))?;
 
@@ -569,52 +765,26 @@ fn handle(
         }
     }
     let d_body = hasher.finalize();
-    m.resp_bytes_total.fetch_add(streamed as u64, Ordering::Relaxed);
+    m.resp_bytes_total
+        .fetch_add(streamed as u64, Ordering::Relaxed);
 
     let resp_body_hex = hex(&d_body);
     let content_type = h.content_type.as_deref().unwrap_or("");
-    if !no_crlf(content_type) {
-        return Err("上游 content-type 含非法 CR/LF".into());
-    }
-    let norm_host = head.upstream.host.to_lowercase();
-    let norm_path = path_no_query(&head.upstream.path).to_string();
-
-    let statement = build_v2_statement(
-        &head.nonce,
-        &norm_host,
-        &norm_path,
+    write_attested_trailer(
+        s,
+        sk,
+        spki,
+        nsm_fd,
+        nsm_lock,
+        m,
+        &head,
+        &nonce_bytes,
         &norm_method,
         h.status,
         content_type,
         &req_body_hex,
         &resp_body_hex,
-    );
-    let sig = sk.sign(&statement).to_bytes();
-
-    let t_nsm = Instant::now();
-    let doc = attest(nsm_fd, nsm_lock, spki, &nonce_bytes)?;
-    m.nsm_ns_total
-        .fetch_add(t_nsm.elapsed().as_nanos() as u64, Ordering::Relaxed);
-    m.nsm_calls.fetch_add(1, Ordering::Relaxed);
-
-    let trailer = json!({
-        "v": 2,
-        "alg": "ed25519",
-        "public_key": B64.encode(spki),
-        "nonce": head.nonce,
-        "upstream_host": norm_host,
-        "upstream_path": norm_path,
-        "http_method": norm_method,
-        "http_status": h.status,
-        "resp_content_type": content_type,
-        "request_body_sha256": req_body_hex,
-        "response_body_sha256": resp_body_hex,
-        "signature": B64.encode(sig),
-        "attestation": B64.encode(&doc),
-    });
-    write_frame(s, RESP_TRAILER, trailer.to_string().as_bytes())
-        .map_err(|e| format!("写 RESP_TRAILER: {}", e))?;
-    Ok(())
+    )
 }
 
 #[derive(Default)]
@@ -704,7 +874,14 @@ fn worker(rx: Arc<Mutex<Receiver<VsockStream>>>, ctx: Arc<Ctx>) {
         s.set_read_timeout(Some(CONTROL_IO_TIMEOUT)).ok();
         s.set_write_timeout(Some(CONTROL_IO_TIMEOUT)).ok();
         let res = catch_unwind(AssertUnwindSafe(|| {
-            handle(&mut s, &ctx.sk, &ctx.spki, ctx.nsm_fd, &ctx.nsm_lock, &ctx.m)
+            handle(
+                &mut s,
+                &ctx.sk,
+                &ctx.spki,
+                ctx.nsm_fd,
+                &ctx.nsm_lock,
+                &ctx.m,
+            )
         }));
 
         ctx.m
@@ -721,7 +898,9 @@ fn worker(rx: Arc<Mutex<Receiver<VsockStream>>>, ctx: Arc<Ctx>) {
                 let _ = write_frame(
                     &mut s,
                     ERR,
-                    json!({ "code": "enclave", "message": e }).to_string().as_bytes(),
+                    json!({ "code": "enclave", "message": e })
+                        .to_string()
+                        .as_bytes(),
                 );
             }
             Err(_) => {
@@ -793,8 +972,7 @@ fn main() {
         }
     }
 
-    let listener =
-        VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, PORT)).expect("bind vsock");
+    let listener = VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, PORT)).expect("bind vsock");
     eprintln!(
         "listening on vsock :{} (workers={}/{}, queue={}), metrics :{}",
         PORT, spawned, N_WORKERS, QUEUE_CAP, METRICS_PORT
@@ -945,11 +1123,21 @@ mod golden {
         assert!(!fx.cases_v2.is_empty(), "cases_v2 为空");
         for c in &fx.cases_v2 {
             let req_body = B64.decode(c.request_body_b64.as_bytes()).expect("req b64");
-            let resp_body = B64.decode(c.response_body_b64.as_bytes()).expect("resp b64");
+            let resp_body = B64
+                .decode(c.response_body_b64.as_bytes())
+                .expect("resp b64");
             let req_hex = hex(&Sha256::digest(&req_body));
             let resp_hex = hex(&Sha256::digest(&resp_body));
-            assert_eq!(req_hex, c.expected.request_body_sha256, "req hash [{}]", c.name);
-            assert_eq!(resp_hex, c.expected.response_body_sha256, "resp hash [{}]", c.name);
+            assert_eq!(
+                req_hex, c.expected.request_body_sha256,
+                "req hash [{}]",
+                c.name
+            );
+            assert_eq!(
+                resp_hex, c.expected.response_body_sha256,
+                "resp hash [{}]",
+                c.name
+            );
 
             let stmt = build_v2_statement(
                 &c.nonce_b64,
@@ -967,7 +1155,12 @@ mod golden {
                 "v2 statement [{}]",
                 c.name
             );
-            assert_eq!(hex(&stmt), c.expected.statement_hex, "v2 statement hex [{}]", c.name);
+            assert_eq!(
+                hex(&stmt),
+                c.expected.statement_hex,
+                "v2 statement hex [{}]",
+                c.name
+            );
         }
     }
 }
@@ -991,7 +1184,14 @@ mod ordered_headers {
             (s("Host"), s("api.example.com")),
             (s("Content-Length"), s("")), // empty sentinel -> filled with body_len
         ];
-        let text = build_request_head_ordered("POST", "/v1/messages?beta=true", "fallback", &ordered, Some("tok123"), 2);
+        let text = build_request_head_ordered(
+            "POST",
+            "/v1/messages?beta=true",
+            "fallback",
+            &ordered,
+            Some("tok123"),
+            2,
+        );
         let head = text.split("\r\n\r\n").next().unwrap();
         let lines: Vec<&str> = head.split("\r\n").collect();
         assert_eq!(lines[0], "POST /v1/messages?beta=true HTTP/1.1");

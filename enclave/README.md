@@ -15,7 +15,7 @@ measures, so it is meant to stay small and to change rarely.
 Compiled into `/attest` and measured by PCR0:
 
 - `Cargo.toml`, `Cargo.lock`, `Dockerfile`
-- `src/{main.rs, lib.rs, tls_profile.rs, egress_boring.rs, egress_openssl.rs}`
+- `src/{main.rs, lib.rs, tls_profile.rs, h2_client.rs, egress_boring.rs, egress_openssl.rs, egress_rustls_aws_lc.rs}`
 - `src/ca-bundle.pem`
 
 **Not** measured (test-only, a separate binary, or not `COPY`-ed into the build image):

@@ -17,6 +17,12 @@ openssl / openssl-sys (crates.io), vendored via openssl-src (OpenSSL 3.6.3)
 Backs the `Stack::OpenSsl` egress backend. OpenSSL 3.x is
 licensed under the Apache License, Version 2.0.
 
+rustls 0.23.37 / aws-lc-rs (crates.io)
+--------------------------------------
+Backs the `Stack::RustlsAwsLc` egress backend used by the Grok client profile.
+rustls is licensed under Apache-2.0, ISC, and MIT terms; aws-lc-rs is licensed
+under ISC and Apache-2.0 terms. See their packaged license files for details.
+
 CA root bundle — src/ca-bundle.pem
 ----------------------------------
 Derived from the OpenBSD `cert.pem` (lineage: Mozilla NSS, MPL-2.0). The original
@@ -26,6 +32,6 @@ validate upstream server certificates.
 
 Other Rust crate dependencies
 -----------------------------
-aws-nitro-enclaves-nsm-api, ed25519-dalek, sha2, serde, serde_bytes, serde_json, base64,
-vsock, getrandom, and their transitive dependencies. See `Cargo.lock` for the full pinned
+aws-nitro-enclaves-nsm-api, ed25519-dalek, h2, http, bytes, tokio, sha2, serde,
+serde_bytes, serde_json, base64, vsock, getrandom, and their transitive dependencies. See `Cargo.lock` for the full pinned
 set; each crate's license is declared in its own metadata on crates.io.

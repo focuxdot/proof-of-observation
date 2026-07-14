@@ -7,6 +7,7 @@ pub enum Stack {
     Rustls,
     Boring,
     OpenSsl,
+    RustlsAwsLc,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,7 +68,6 @@ pub enum DecodeError {
     Trailing,
 }
 
-
 fn put_len(o: &mut Vec<u8>, n: usize) {
     o.extend_from_slice(&(n as u32).to_be_bytes());
 }
@@ -94,6 +94,7 @@ pub fn canonical_encode(s: &TlsProfile) -> Vec<u8> {
         Stack::Rustls => 0,
         Stack::Boring => 1,
         Stack::OpenSsl => 2,
+        Stack::RustlsAwsLc => 3,
     });
     put_str(&mut o, &s.cipher_list);
     put_strs(&mut o, &s.sigalgs);
@@ -129,7 +130,6 @@ pub fn canonical_encode(s: &TlsProfile) -> Vec<u8> {
     }
     o
 }
-
 
 struct Dec<'a> {
     b: &'a [u8],
@@ -194,6 +194,7 @@ pub fn decode(b: &[u8]) -> Result<TlsProfile, DecodeError> {
         0 => Stack::Rustls,
         1 => Stack::Boring,
         2 => Stack::OpenSsl,
+        3 => Stack::RustlsAwsLc,
         _ => return Err(DecodeError::BadTag("stack")),
     };
     let cipher_list = d.s()?;
@@ -292,6 +293,23 @@ mod tests {
     }
 
     #[test]
+    fn rustls_aws_lc_stack_tag_roundtrips() {
+        let mut s = sample();
+        s.spec_id = 4;
+        s.stack = Stack::RustlsAwsLc;
+        s.groups.clear();
+        s.alpn = vec!["h2".into(), "http/1.1".into()];
+        s.ext_order = ExtOrder::PermutePerSession;
+        let enc = canonical_encode(&s);
+        assert_eq!(
+            enc[4 + 8 + 4 + s.label.len()],
+            3,
+            "RustlsAwsLc canonical tag"
+        );
+        assert_eq!(decode(&enc).unwrap(), s);
+    }
+
+    #[test]
     fn decode_rejects_trailing_garbage() {
         let mut enc = canonical_encode(&sample());
         enc.push(0xff);
@@ -316,7 +334,12 @@ mod tests {
         s.h2 = Some(H2Settings {
             settings: vec![(1, 65536), (4, 6291456)],
             window_update: 15663105,
-            pseudo_header_order: vec![":method".into(), ":authority".into(), ":scheme".into(), ":path".into()],
+            pseudo_header_order: vec![
+                ":method".into(),
+                ":authority".into(),
+                ":scheme".into(),
+                ":path".into(),
+            ],
         });
         let enc = canonical_encode(&s);
         assert_eq!(decode(&enc).unwrap(), s);

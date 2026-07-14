@@ -37,7 +37,9 @@ pub fn connect(
     }
     match profile.ext_order {
         ExtOrder::Fixed => {}
-        ExtOrder::PermutePerSession => return Err("ext_order=PermutePerSession 在 OpenSSL 后端不支持".into()),
+        ExtOrder::PermutePerSession => {
+            return Err("ext_order=PermutePerSession 在 OpenSSL 后端不支持".into())
+        }
     }
 
     let floor = match profile.min_negotiated {
