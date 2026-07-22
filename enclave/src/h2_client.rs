@@ -22,6 +22,14 @@ pub trait H2ResponseSink {
 
 struct BlockingIo<S>(S);
 
+fn outgoing_authorization_value(original_value: &str, token: Option<&str>) -> Option<String> {
+    match token {
+        Some(token) => Some(format!("Bearer {token}")),
+        None if !original_value.is_empty() => Some(original_value.to_string()),
+        None => None,
+    }
+}
+
 impl<S: Read + Unpin> AsyncRead for BlockingIo<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -164,8 +172,8 @@ pub fn execute<S: Read + Write + Send + Unpin + 'static, T: H2ResponseSink>(
         }
         let value = if lower == "authorization" {
             auth_seen = true;
-            match token {
-                Some(token) => format!("Bearer {token}"),
+            match outgoing_authorization_value(original_value, token) {
+                Some(value) => value,
                 None => continue,
             }
         } else if lower == "content-length" {
@@ -288,6 +296,19 @@ mod tests {
     use std::os::unix::net::UnixStream;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn preserves_raw_authorization_without_token_and_prefers_token_when_present() {
+        assert_eq!(
+            outgoing_authorization_value("bare-zhipu-key", None),
+            Some("bare-zhipu-key".to_string())
+        );
+        assert_eq!(outgoing_authorization_value("", None), None);
+        assert_eq!(
+            outgoing_authorization_value("must-not-leak", Some("oauth-token")),
+            Some("Bearer oauth-token".to_string())
+        );
+    }
 
     struct RecordingSink {
         events: Vec<String>,

@@ -66,10 +66,11 @@ struct Upstream {
     headers: BTreeMap<String, String>,
     // Ordered, case-preserving outgoing header template. When present it takes
     // precedence over `headers`: headers are emitted verbatim in this exact order
-    // and case. `authorization` / `content-length` entries are empty-value
-    // sentinels filled in here (token / actual body length). Loosely typed: each
-    // item must be exactly [name, value], otherwise it is rejected and the build
-    // falls back to the `headers` map path.
+    // and case. Bearer `authorization` and `content-length` entries use
+    // empty-value sentinels filled in here (token / actual body length); a
+    // non-Bearer authorization entry may carry its raw value. Loosely typed:
+    // each item must be exactly [name, value], otherwise it is rejected and the
+    // build falls back to the `headers` map path.
     #[serde(default, rename = "headersOrdered")]
     headers_ordered: Option<Vec<Vec<String>>>,
 }
@@ -214,9 +215,10 @@ fn parse_headers_ordered(v: &Option<Vec<Vec<String>>>) -> Option<Vec<(String, St
 
 /// Assemble the HTTP/1.1 request head verbatim from the ordered template
 /// (exact order and case, no sorting, no lowercasing). The `authorization` slot is
-/// filled from the token (only if present); the `content-length` slot is filled with
-/// the actual body length (both are empty-value sentinels). `transfer-encoding` is
-/// stripped. Safety net: if the template omits host / content-length they are
+/// filled from the token as Bearer when present; otherwise a non-empty raw value is
+/// preserved for provider-specific schemes such as Zhipu's bare API key. The
+/// `content-length` slot is filled with the actual body length. `transfer-encoding`
+/// is stripped. Safety net: if the template omits host / content-length they are
 /// appended so the request stays well-formed. `connection` is NOT hard-coded here —
 /// it is carried by the template when provided.
 fn build_request_head_ordered(
@@ -234,6 +236,8 @@ fn build_request_head_ordered(
         if k.eq_ignore_ascii_case("authorization") {
             if let Some(t) = token {
                 s.push_str(&format!("{}: Bearer {}\r\n", k, t));
+            } else if !v.is_empty() {
+                s.push_str(&format!("{}: {}\r\n", k, v));
             }
         } else if k.eq_ignore_ascii_case("content-length") {
             s.push_str(&format!("{}: {}\r\n", k, body_len));
@@ -255,6 +259,49 @@ fn build_request_head_ordered(
     }
     s.push_str("\r\n");
     s
+}
+
+/// Assemble the legacy map-path HTTP/1.1 head. Header iteration order remains
+/// the BTreeMap order supplied by the caller. Bearer token injection wins over
+/// any raw authorization value; without a token, a non-empty raw value is kept.
+fn build_request_head_unordered(
+    norm_method: &str,
+    path: &str,
+    host: &str,
+    headers: &BTreeMap<String, String>,
+    token: Option<&str>,
+    body_len: usize,
+) -> String {
+    let mut req = format!("{} {} HTTP/1.1\r\n", norm_method, path);
+    req.push_str(&format!("host: {}\r\n", host));
+    for (k, v) in headers {
+        let lk = k.to_lowercase();
+        if lk == "authorization" {
+            if token.is_none() && !v.is_empty() {
+                req.push_str(&format!("{}: {}\r\n", k, v));
+            }
+            continue;
+        }
+        if lk == "host"
+            || lk == "content-length"
+            || lk == "connection"
+            || lk == "transfer-encoding"
+            || lk == "te"
+            || lk == "trailer"
+            || lk == "upgrade"
+            || lk == "proxy-connection"
+            || lk == "keep-alive"
+        {
+            continue;
+        }
+        req.push_str(&format!("{}: {}\r\n", k, v));
+    }
+    if let Some(tok) = token {
+        req.push_str(&format!("authorization: Bearer {}\r\n", tok));
+    }
+    req.push_str(&format!("content-length: {}\r\n", body_len));
+    req.push_str("connection: close\r\n\r\n");
+    req
 }
 
 struct Headers {
@@ -703,33 +750,14 @@ fn handle(
             head.token.as_deref(),
             body.len(),
         ),
-        None => {
-            let mut req = format!("{} {} HTTP/1.1\r\n", norm_method, head.upstream.path);
-            req.push_str(&format!("host: {}\r\n", head.upstream.host));
-            for (k, v) in &head.upstream.headers {
-                let lk = k.to_lowercase();
-                if lk == "host"
-                    || lk == "authorization"
-                    || lk == "content-length"
-                    || lk == "connection"
-                    || lk == "transfer-encoding"
-                    || lk == "te"
-                    || lk == "trailer"
-                    || lk == "upgrade"
-                    || lk == "proxy-connection"
-                    || lk == "keep-alive"
-                {
-                    continue;
-                }
-                req.push_str(&format!("{}: {}\r\n", k, v));
-            }
-            if let Some(tok) = &head.token {
-                req.push_str(&format!("authorization: Bearer {}\r\n", tok));
-            }
-            req.push_str(&format!("content-length: {}\r\n", body.len()));
-            req.push_str("connection: close\r\n\r\n");
-            req
-        }
+        None => build_request_head_unordered(
+            &norm_method,
+            &head.upstream.path,
+            &head.upstream.host,
+            &head.upstream.headers,
+            head.token.as_deref(),
+            body.len(),
+        ),
     };
 
     tls.write_all(req.as_bytes())
@@ -1168,7 +1196,8 @@ mod golden {
 // Ordered outgoing headers: emitted verbatim in the given order and case.
 #[cfg(test)]
 mod ordered_headers {
-    use super::{build_request_head_ordered, parse_headers_ordered};
+    use super::{build_request_head_ordered, build_request_head_unordered, parse_headers_ordered};
+    use std::collections::BTreeMap;
 
     fn s(x: &str) -> String {
         x.to_string()
@@ -1221,6 +1250,49 @@ mod ordered_headers {
         assert!(text.contains("host: host.example\r\n")); // backfilled
         assert!(text.contains("content-length: 3\r\n")); // backfilled
         assert!(!text.to_lowercase().contains("authorization")); // no token -> omitted
+    }
+
+    #[test]
+    fn ordered_emit_preserves_raw_authorization_without_token() {
+        let text = build_request_head_ordered(
+            "GET",
+            "/api/monitor/usage/quota/limit",
+            "open.bigmodel.cn",
+            &[(s("Authorization"), s("bare-zhipu-key"))],
+            None,
+            0,
+        );
+        assert!(text.contains("Authorization: bare-zhipu-key\r\n"));
+        assert!(!text.contains("Bearer bare-zhipu-key"));
+    }
+
+    #[test]
+    fn unordered_emit_preserves_raw_authorization_without_token() {
+        let headers = BTreeMap::from([(s("authorization"), s("bare-zhipu-key"))]);
+        let text = build_request_head_unordered(
+            "GET",
+            "/api/monitor/usage/quota/limit",
+            "open.bigmodel.cn",
+            &headers,
+            None,
+            0,
+        );
+        assert!(text.contains("authorization: bare-zhipu-key\r\n"));
+        assert!(!text.contains("Bearer bare-zhipu-key"));
+    }
+
+    #[test]
+    fn token_overrides_raw_authorization() {
+        let text = build_request_head_ordered(
+            "GET",
+            "/x",
+            "host.example",
+            &[(s("Authorization"), s("must-not-leak"))],
+            Some("oauth-token"),
+            0,
+        );
+        assert!(text.contains("Authorization: Bearer oauth-token\r\n"));
+        assert!(!text.contains("must-not-leak"));
     }
 
     #[test]
