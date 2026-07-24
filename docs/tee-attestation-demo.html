@@ -151,8 +151,16 @@
   .limit{background:rgba(255,200,87,.1);border:1px solid rgba(179,120,26,.3);border-radius:12px;padding:16px}
   .limit h4{margin:0 0 8px;color:var(--warn);font-size:15px}
   .limit p{margin:0;font-size:13.5px;color:var(--dim)}
+  .verifier-cta{display:flex;align-items:center;justify-content:space-between;gap:24px;background:rgba(47,111,219,.06);border:1px solid rgba(47,111,219,.3);border-radius:14px;padding:24px 26px}
+  .verifier-cta .cta-copy{max-width:720px}
+  .verifier-cta h2{margin:0 0 6px;color:var(--txt);font-size:19px;letter-spacing:0;text-transform:none}
+  .verifier-cta p{margin:0;color:var(--dim);font-size:14px;line-height:1.65}
+  .verifier-link{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;min-height:42px;padding:9px 17px;border-radius:9px;background:var(--accent);color:#fff;text-decoration:none;font-size:14px;font-weight:700;transition:background .15s,transform .15s}
+  .verifier-link:hover{background:#255fbe;transform:translateY(-1px)}
+  .verifier-link:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
   .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-top:14px}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  @media(max-width:680px){.verifier-cta{align-items:stretch;flex-direction:column}.verifier-link{width:100%}}
   /* attestation modal */
   .att-open{margin-left:8px;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;border:1px solid rgba(106,69,230,.5);background:rgba(106,69,230,.1);color:var(--signed);border-radius:20px;padding:2px 9px}
   .att-open:hover{background:rgba(106,69,230,.2)}
@@ -387,6 +395,14 @@
   </div>
 </section>
 
+<section class="verifier-cta" aria-labelledby="verifier-cta-title">
+  <div class="cta-copy">
+    <h2 id="verifier-cta-title" data-i18n="verifier_cta_title">现在，验证你自己的响应</h2>
+    <p data-i18n="verifier_cta_body">你已经知道验证器核对什么。把中转站返回的完整响应贴进去，浏览器会在本地检查证明链、PCR0 和响应签名。</p>
+  </div>
+  <a class="verifier-link" href="./tee-verify.html" data-i18n="verifier_cta_link">打开验证器 →</a>
+</section>
+
 <div class="modal" id="att-modal">
   <div class="modal-card">
     <button class="modal-close" onclick="closeAtt()">✕</button>
@@ -519,6 +535,9 @@ const EN = {
   lim1_p: `The attestation report is issued by TEE (AWS). This isn't pure blockchain-style mathematics — it's "trust TEE (AWS) as a company + assume no TEE vulnerability". It moves trust from "the operator" to "the chip / cloud vendor"; it doesn't abolish trust entirely.`,
   lim2_h: `The OpenAI side can only be "observed"`,
   lim2_p: `OpenAI doesn't sign its own responses. So "the official API genuinely produced this" can at best reach "the TEE observed it over real TLS" — never a pure mathematical proof. That's the ceiling of this approach.`,
+  verifier_cta_title: `Now verify your own response`,
+  verifier_cta_body: `You now know what the verifier checks. Paste in the complete response returned by the relay, and your browser will locally verify the attestation chain, PCR0, and response signature.`,
+  verifier_cta_link: `Open the verifier →`,
   m_title: `A random key — how does it get trusted?`,
   m_sub1: `Every time the TEE boots it generates its signing key <b>at random</b>. The user never knows this public key in advance — it's <b>certified on the spot</b> by the TEE (AWS)-signed attestation, exactly like an HTTPS certificate. The only two things the user fixes in advance are: the <b style="color:var(--accent)">TEE (AWS) root certificate</b> and <b style="color:var(--accent)">your published PCR0</b>.`,
   chain_root_ct: `① TEE (AWS Nitro) root certificate <span class="pin">trusted in advance · fixed</span>`,
