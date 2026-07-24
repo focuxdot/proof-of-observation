@@ -850,6 +850,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 const te = new TextEncoder();
 // v2 字段分解声明的域名(docs/tee-signing-v2-design.md);布局须与 verifier/signing.ts buildV2Statement 逐字节一致。
 const SIGNING_DOMAIN_V2 = 'tee-exchange-v2';
+const WOKEY_SSE_TRANSPORT_KEEPALIVE_V1 = te.encode(': wokey-transport-keepalive-v1\n\n');
 const b64ToBytes = (b)=>{const s=atob(b);const u=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u[i]=s.charCodeAt(i);return u;};
 const bytesToB64 = (u)=>{let s='';for(const b of u)s+=String.fromCharCode(b);return btoa(s);};
 const bytesToHex = (u)=>Array.from(u).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -872,13 +873,6 @@ function startsWithBytes(bytes,prefix,offset=0){
 function findLastBytes(bytes,needle){
   if(!needle.length||needle.length>bytes.length)return -1;
   for(let i=bytes.length-needle.length;i>=0;i--)if(startsWithBytes(bytes,needle,i))return i;
-  return -1;
-}
-function findFirstLinePrefix(bytes,prefix){
-  if(startsWithBytes(bytes,prefix,0))return 0;
-  for(let i=0;i<bytes.length;i++){
-    if(bytes[i]===10&&startsWithBytes(bytes,prefix,i+1))return i+1;
-  }
   return -1;
 }
 function trimSseDataPrefix(line,prefix){
@@ -916,9 +910,11 @@ function parseProofEventBytes(bytes){
   for(let i=eventEnd;i<eventBlock.length;i++)if(!isAsciiWhitespaceByte(eventBlock[i]))return null;
   const proof=JSON.parse(dataLines.join('\n'));
   if(!isProofWire(proof))throw new Error(typeof L==='function'?L('tee.proof data 字段不是有效证明材料','tee.proof data field is not valid proof material'):'tee.proof data 字段不是有效证明材料');
-  const firstEvent=findFirstLinePrefix(before,te.encode('event: '));
-  const bodyBytes=firstEvent>=0?before.subarray(firstEvent):before;
-  return {bodyBytes,proof};
+  // The capture starts at byte zero. Never search forward for an SSE event or
+  // keepalive: doing so could discard a meaningful unsigned prefix before the
+  // signed body. Exact transport keepalives are normalized later, only at
+  // offset zero and only when the signed response hash proves the removal.
+  return {bodyBytes:before,proof};
 }
 function parseProofEventText(text){
   return parseProofEventBytes(te.encode(text));
@@ -1081,6 +1077,25 @@ async function normalizePastedBodyBytes(bodyBytes,proof,allowLeadingBlankTrim){
       return {bodyBytes:candidate,ignoredLeadingBytes:offset};
     }
   }
+}
+async function normalizeSseTransportKeepalives(bodyBytes,proof){
+  if(!proof || !validSha256Hex(proof.response_body_sha256)){
+    return {bodyBytes,ignoredTransportKeepaliveBytes:0,ignoredTransportKeepaliveCount:0};
+  }
+  const expected=String(proof.response_body_sha256).toLowerCase();
+  if(bytesToHex(await sha256(bodyBytes))===expected){
+    return {bodyBytes,ignoredTransportKeepaliveBytes:0,ignoredTransportKeepaliveCount:0};
+  }
+  let offset=0,count=0;
+  while(startsWithBytes(bodyBytes,WOKEY_SSE_TRANSPORT_KEEPALIVE_V1,offset)){
+    offset+=WOKEY_SSE_TRANSPORT_KEEPALIVE_V1.length;
+    count++;
+    const candidate=bodyBytes.subarray(offset);
+    if(bytesToHex(await sha256(candidate))===expected){
+      return {bodyBytes:candidate,ignoredTransportKeepaliveBytes:offset,ignoredTransportKeepaliveCount:count};
+    }
+  }
+  return {bodyBytes,ignoredTransportKeepaliveBytes:0,ignoredTransportKeepaliveCount:0};
 }
 
 // v2 字段分解声明:与 verifier/signing.ts buildV2Statement 逐字节一致(golden 向量锁)。
@@ -1504,7 +1519,7 @@ const I18N={
     proofAttShown:(n)=>'⟨COSE attestation 文档 · '+n+' base64 字符 · 已解码见下方 attestation_decoded⟩',
     proofNote:'这是验证所依据的全部 proof:<b>proof</b> 里飞地签名覆盖的声明字段,以及把其中的 <code>attestation</code>(AWS 背书的 COSE 文档)解码后的内容(<code>attestation_decoded</code>)。',
     streamTitle:'流式请求 · 保存 response.sse', multipartTitle:'非流式请求 · 保存 response.multipart',
-    streamIntro:'保存完整 SSE 响应；末尾会包含 <code>event: tee.proof</code>。',
+    streamIntro:'保存完整 SSE 响应；慢请求开头可能有传输 keepalive，末尾会包含 <code>event: tee.proof</code>。',
     multipartIntro:'开启 multipart proof 模式，保存完整 <code>multipart/mixed</code> 响应。',
     exampleTitle:'请求示例', streamTab:'流式 response.sse', multipartTab:'非流式 response.multipart',
     requestModeLabel:'请求方式', apiFormatLabel:'API 格式', messagesTab:'Messages', responsesTab:'Responses',
@@ -1524,7 +1539,7 @@ const I18N={
     checkSigOk:'响应签名通过', checkSigBad:'响应签名失败',
     checkSigOkDetail:'来源、模型与正文 hash 被签名覆盖', checkSigBadDetail:'来源或响应 hash 的签名无法验证',
     checkHashOk:'正文 hash 匹配', checkHashBad:'正文 hash 不匹配',
-    checkHashOkDetail:'你收到的字节未被篡改', checkHashBadDetail:'你收到的字节与签名覆盖的 hash 不一致',
+    checkHashOkDetail:'还原后的上游正文字节未被篡改', checkHashBadDetail:'还原后的上游正文字节与签名覆盖的 hash 不一致',
     claimedModel:'声称模型', model:'模型', verifyTime:'验证时间', notRecorded:'未记录',
     sourceLabel:'开源验证来源', localOnly:'纯本地 WebCrypto · 无网络请求',
     rootPin:'（真 Nitro：AWS 根由页面内置 SHA-256 指纹 pin，无需另给公钥）',
@@ -1533,7 +1548,7 @@ const I18N={
     multipartLoaded:(ignored,got)=>'已识别 multipart 响应'+ignored+(got?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0'),
     ignoredLeading:(n)=>'，已忽略粘贴开头 '+n+' 字节空行',
     proofOnlyLoad:(got)=>'已识别 tee.proof data'+(got?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0')+'；缺少前面的 SSE 响应正文，不能完成验签',
-    sseLoaded:(got)=>'已识别完整 SSE 响应'+(got?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0'),
+    sseLoaded:(got,count)=>'已识别完整 SSE 响应'+(count?'，已按签名哈希忽略 '+count+' 条传输 keepalive':'')+(got?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0'),
     proofParseFailed:(msg)=>'⚠️ tee.proof 解析失败：'+msg,
     invalidJsonOrSse:'⚠️ 不是合法 JSON，也不是完整 SSE',
     bundleRecognized:(got)=>'已识别响应包'+(got?'，并读取审计 PCR0':'，但未找到审计 PCR0'),
@@ -1544,7 +1559,7 @@ const I18N={
     intoAtt:'粘进 att.b64', saveBundle:'存成 bundle.json', intoResp:'粘进 resp.b64',
     copied:(n,h)=>'✓ 已复制('+n+' 字符)—— '+h, copyFailed:'✕ 复制失败,请手动取',
     missingBodyTitle:'⚠️ 缺响应正文', missingBodyText:(hash)=>'这份材料里的 <span class="dhash" style="padding:1px 6px">'+hash+'</span> 已被TEE签名覆盖,但你没有提供响应正文,所以本页不能重算 SHA-256 来证明“你看到的响应字节”就是它。',
-    responseBodyBytes:'响应体(你实际收到的字节)', bytes:(n)=>n+' 字节', empty:'(空)', clickFull:'…点击看全文 ▸', fullBodyTitle:'点击查看完整响应体',
+    responseBodyBytes:'响应体(验证还原的上游字节)', bytes:(n)=>n+' 字节', empty:'(空)', clickFull:'…点击看全文 ▸', fullBodyTitle:'点击查看完整响应体',
     compareSigned:(signed,ok)=>'对比签名覆盖的 <span class="dhash" style="padding:1px 6px">'+signed+'</span> → '+(ok?'<b class="okc">一致 ✓</b>':'<b class="badc">不一致 ✗ · 这段被改过</b>'),
     missingPcrTitle:'⚠️ 缺少审计 PCR0', missingPcrBody:'请粘贴或上传包含 expectedPcr0 / pcr0 / proof.pcr0 的响应包或 trust 文件后再验证。',
     verifying1:'🔄 验证中 —— 正在你本地解析 attestation、核验证书链和签名…',
@@ -1598,7 +1613,7 @@ const I18N={
     proofAttShown:(n)=>'⟨COSE attestation document · '+n+' base64 characters · decoded below as attestation_decoded⟩',
     proofNote:'This is the complete proof used for verification: <b>proof</b> contains the enclave-signed statement fields, and <code>attestation_decoded</code> is the decoded AWS-backed COSE attestation document.',
     streamTitle:'Streaming request · save response.sse', multipartTitle:'Non-streaming request · save response.multipart',
-    streamIntro:'Save the complete SSE response; the final event contains <code>event: tee.proof</code>.',
+    streamIntro:'Save the complete SSE response; slow requests may start with transport keepalives, and the final event contains <code>event: tee.proof</code>.',
     multipartIntro:'Enable multipart proof mode and save the full <code>multipart/mixed</code> response.',
     exampleTitle:'Request examples', streamTab:'Streaming response.sse', multipartTab:'Non-streaming response.multipart',
     requestModeLabel:'Request mode', apiFormatLabel:'API format', messagesTab:'Messages', responsesTab:'Responses',
@@ -1618,7 +1633,7 @@ const I18N={
     checkSigOk:'Response signature passed', checkSigBad:'Response signature failed',
     checkSigOkDetail:'Source, model, and response-body hash are covered by the signature', checkSigBadDetail:'The source or response hash signature could not be verified',
     checkHashOk:'Response-body hash matched', checkHashBad:'Response-body hash mismatch',
-    checkHashOkDetail:'The bytes you received were not tampered with', checkHashBadDetail:'The bytes you received do not match the signed hash',
+    checkHashOkDetail:'The reconstructed upstream response bytes were not tampered with', checkHashBadDetail:'The reconstructed upstream response bytes do not match the signed hash',
     claimedModel:'Claimed model', model:'Model', verifyTime:'Verified at', notRecorded:'not recorded',
     sourceLabel:'Open-source verifier', localOnly:'Local WebCrypto · no network requests',
     rootPin:'(Real Nitro: AWS root is pinned by SHA-256 fingerprint in this page; no public key input needed.)',
@@ -1627,7 +1642,7 @@ const I18N={
     multipartLoaded:(ignored,got)=>'Recognized multipart response'+ignored+(got?', and loaded audit PCR0 from proof':', but audit PCR0 was not found'),
     ignoredLeading:(n)=>', ignored '+n+' leading blank byte(s) from the pasted text',
     proofOnlyLoad:(got)=>'Recognized tee.proof data'+(got?', and loaded audit PCR0 from proof':', but audit PCR0 was not found')+'; missing the preceding SSE response body, so full signature verification cannot complete',
-    sseLoaded:(got)=>'Recognized complete SSE response'+(got?', and loaded audit PCR0 from proof':', but audit PCR0 was not found'),
+    sseLoaded:(got,count)=>'Recognized complete SSE response'+(count?', ignored '+count+' transport keepalive record(s) as proven by the signed hash':'')+(got?', and loaded audit PCR0 from proof':', but audit PCR0 was not found'),
     proofParseFailed:(msg)=>'⚠️ tee.proof parse failed: '+msg,
     invalidJsonOrSse:'⚠️ Not valid JSON and not a complete SSE response',
     bundleRecognized:(got)=>'Recognized response bundle'+(got?', and loaded audit PCR0':', but audit PCR0 was not found'),
@@ -1638,7 +1653,7 @@ const I18N={
     intoAtt:'paste into att.b64', saveBundle:'save as bundle.json', intoResp:'paste into resp.b64',
     copied:(n,h)=>'✓ Copied ('+n+' characters) — '+h, copyFailed:'✕ Copy failed, please extract manually',
     missingBodyTitle:'⚠️ Missing response body', missingBodyText:(hash)=>'The hash <span class="dhash" style="padding:1px 6px">'+hash+'</span> is covered by the TEE signature, but no response body was provided. This page cannot recompute SHA-256 to prove the visible bytes match it.',
-    responseBodyBytes:'Response body (bytes you actually received)', bytes:(n)=>n+' bytes', empty:'(empty)', clickFull:'…view full text ▸', fullBodyTitle:'Click to view the complete response body',
+    responseBodyBytes:'Response body (verified upstream bytes)', bytes:(n)=>n+' bytes', empty:'(empty)', clickFull:'…view full text ▸', fullBodyTitle:'Click to view the complete response body',
     compareSigned:(signed,ok)=>'Compare with signed hash <span class="dhash" style="padding:1px 6px">'+signed+'</span> → '+(ok?'<b class="okc">match ✓</b>':'<b class="badc">mismatch ✗ · this response was modified</b>'),
     missingPcrTitle:'⚠️ Missing audit PCR0', missingPcrBody:'Paste or upload a response package or trust file containing expectedPcr0 / pcr0 / proof.pcr0 before verifying.',
     verifying1:'🔄 Verifying — parsing attestation, certificate chain, and signatures locally…',
@@ -2034,7 +2049,7 @@ function setLoadMsg(text,kind){
   const k=kind||loadMsgKind(text);
   if(k)el.classList.add(k);
 }
-function loadSseText(text){
+async function loadSseText(text){
   return loadSseBytes(te.encode(text));
 }
 async function loadMultipartBytes(bytes){
@@ -2059,10 +2074,11 @@ async function loadMultipartBytes(bytes){
   refreshLoad();
   return true;
 }
-function loadSseBytes(bytes){
+async function loadSseBytes(bytes){
   const parsed=parseProofEventBytes(bytes);
   if(!parsed)return false;
-  const bodyText=td.decode(parsed.bodyBytes);
+  const normalized=await normalizeSseTransportKeepalives(parsed.bodyBytes,parsed.proof);
+  const bodyText=td.decode(normalized.bodyBytes);
   if(!bodyText.trim()){
     partialProof=parsed.proof; loaded=null;
     const gotPcr0=adoptExpectedPcr0(parsed.proof);
@@ -2070,20 +2086,26 @@ function loadSseBytes(bytes){
     refreshLoad();
     return true;
   }
-  loaded={v:2,responseBody_b64:bytesToB64(parsed.bodyBytes),proof:parsed.proof,_source:'sse'};
+  loaded={
+    v:2,
+    responseBody_b64:bytesToB64(normalized.bodyBytes),
+    proof:parsed.proof,
+    _source:'sse',
+    _transportKeepaliveCount:normalized.ignoredTransportKeepaliveCount,
+  };
   partialProof=null;
   const gotPcr0=adoptExpectedPcr0(parsed.proof);
-  setLoadMsg(tt('sseLoaded',gotPcr0),gotPcr0?'ok':'error');
+  setLoadMsg(tt('sseLoaded',gotPcr0,normalized.ignoredTransportKeepaliveCount),gotPcr0?'ok':'error');
   refreshLoad();
   return true;
 }
 async function ingestBytes(bytes){
-  try{ if(await loadMultipartBytes(bytes))return; if(loadSseBytes(bytes))return; }catch(e){setLoadMsg(tt('proofParseFailed',e.message),'error');return;}
+  try{ if(await loadMultipartBytes(bytes))return; if(await loadSseBytes(bytes))return; }catch(e){setLoadMsg(tt('proofParseFailed',e.message),'error');return;}
   await ingest(td.decode(bytes));
 }
 async function ingest(text){
   const bytes=te.encode(text);
-  try{ if(await loadMultipartBytes(bytes))return; if(loadSseText(text))return; }catch(e){setLoadMsg(tt('proofParseFailed',e.message),'error');return;}
+  try{ if(await loadMultipartBytes(bytes))return; if(await loadSseText(text))return; }catch(e){setLoadMsg(tt('proofParseFailed',e.message),'error');return;}
   const looseProof=parseLooseProofData(text);
   if(looseProof){
     partialProof=looseProof; loaded=null;

@@ -12,6 +12,7 @@ import {
   parseTeeProofEvent,
   parseTeeProofMultipartResponse,
   TEE_PROOF_EVENT,
+  WOKEY_SSE_TRANSPORT_KEEPALIVE_V1,
   type TeeProofWire,
   type AttestationVerifier,
 } from './tee-verify-core.ts';
@@ -197,6 +198,53 @@ describe('parseTeeProofEvent', () => {
 
     expect(parsed.body).toEqual(upstream);
     expect(parsed.proof?.response_body_sha256).toBe(proof.response_body_sha256);
+  });
+
+  it('removes proof-gated transport keepalives before the signed upstream bytes', () => {
+    const upstream = Buffer.from('event: message_stop\ndata: {}\n\n', 'utf8');
+    const { proof, pubB64 } = makeSigned({ responseBody: upstream });
+    const suffix = Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8');
+    const keepalives = Buffer.from(WOKEY_SSE_TRANSPORT_KEEPALIVE_V1.repeat(3), 'utf8');
+
+    const parsed = parseTeeProofEvent(Buffer.concat([keepalives, upstream, suffix]));
+
+    expect(parsed.body).toEqual(upstream);
+    expect(parsed.ignoredTransportKeepaliveCount).toBe(3);
+    expect(parsed.ignoredTransportKeepaliveBytes).toBe(keepalives.byteLength);
+    expect(verifyTeeExchange(
+      { expectedPcr0: PCR0, responseBody: parsed.body, proof: parsed.proof! },
+      { verifyAttestationDoc: stubAtt({ publicKey: pubB64 }) },
+    ).ok).toBe(true);
+  });
+
+  it('keeps an identical leading upstream comment when the signed hash includes it', () => {
+    const upstream = Buffer.from(
+      WOKEY_SSE_TRANSPORT_KEEPALIVE_V1 + 'event: message_stop\ndata: {}\n\n',
+      'utf8',
+    );
+    const { proof } = makeSigned({ responseBody: upstream });
+    const suffix = Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8');
+
+    const parsed = parseTeeProofEvent(Buffer.concat([upstream, suffix]));
+
+    expect(parsed.body).toEqual(upstream);
+    expect(parsed.ignoredTransportKeepaliveCount).toBeUndefined();
+  });
+
+  it('does not remove near matches or transport markers after upstream bytes begin', () => {
+    const upstream = Buffer.from('event: message_start\ndata: {}\n\n', 'utf8');
+    const { proof } = makeSigned({ responseBody: upstream });
+    const suffix = Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8');
+    const nearMatch = Buffer.from(': wokey-transport-keepalive-v2\n\n', 'utf8');
+    const markerAfterBody = Buffer.from(WOKEY_SSE_TRANSPORT_KEEPALIVE_V1, 'utf8');
+
+    const nearParsed = parseTeeProofEvent(Buffer.concat([nearMatch, upstream, suffix]));
+    const afterParsed = parseTeeProofEvent(Buffer.concat([upstream, markerAfterBody, suffix]));
+
+    expect(nearParsed.body).toEqual(Buffer.concat([nearMatch, upstream]));
+    expect(nearParsed.ignoredTransportKeepaliveCount).toBeUndefined();
+    expect(afterParsed.body).toEqual(Buffer.concat([upstream, markerAfterBody]));
+    expect(afterParsed.ignoredTransportKeepaliveCount).toBeUndefined();
   });
 
   it('does not strip an invalid tee.proof-looking suffix', () => {

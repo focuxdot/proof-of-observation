@@ -2,9 +2,9 @@
 //
 //   npx tsx tee-verify-stream.ts <captured-response> --pcr0 <hex> [--host <api.example.com>]
 //
-// 输入是你**实际收到的完整响应**:SSE(上游字节 + 末尾 event: tee.proof)或 multipart/mixed
-// (第一段 raw response bytes,第二段 proof)。本工具:① 剥出 proof;② 对其余字节
-// (= 飞地签名的上游原文)重算 H(respBody);
+// 输入是你**实际收到的完整响应**:SSE(可选前置传输 keepalive + 上游字节 + 末尾
+// event: tee.proof)或 multipart/mixed(第一段 raw response bytes,第二段 proof)。
+// 本工具:① 剥出 proof;② 以签名哈希为闸剥固定前置 keepalive,还原上游原文并重算 H(respBody);
 // ③ 调共享核心 v2 验证(attestation 链 + PCR0 + 公钥绑定 + nonce 绑定 + 声明验签 + 读 host/path)。
 //
 //   · --pcr0  (必填)审计公布、可由 reproducible-build 复算的镜像度量
@@ -33,7 +33,7 @@ if (!capturePath || !pcr0) {
 }
 
 const streamBytes = readFileSync(capturePath);
-const { body, proof } = parseTeeProofCapture(streamBytes);
+const { body, proof, ignoredTransportKeepaliveCount } = parseTeeProofCapture(streamBytes);
 if (!proof) {
   console.error('❌ 未在响应中找到可验证的 tee.proof —— 该响应未自证(可能走了降级/transform 路径,或 proof 被中间层吞掉)。');
   process.exit(1);
@@ -52,7 +52,7 @@ console.log('PCR0(文档):', result.attestation.pcr0);
 console.log('绑定公钥  :', result.attestation.publicKey);
 console.log('上游 host :', result.provenance.upstreamHost, result.provenance.upstreamPath);
 console.log('状态/类型 :', `${result.provenance.httpStatus} · ${result.provenance.respContentType}`);
-console.log('响应字节  :', `${body.byteLength} B(已剥离流末 tee.proof)`);
+console.log('响应字节  :', `${body.byteLength} B(已剥离流末 tee.proof${ignoredTransportKeepaliveCount ? ` + ${ignoredTransportKeepaliveCount} 条传输 keepalive` : ''})`);
 console.log('──');
 for (const c of result.checks) console.log(`  ${c.ok ? '✅' : '❌'} ${String(c.name).padEnd(6, '　')} ${c.detail}`);
 console.log(`  判定: ${result.ok ? '✅ 全过——真飞地跑审计镜像、签了你收到的这段响应(未篡改),host 已签名覆盖' : '❌ 校验失败'}`);

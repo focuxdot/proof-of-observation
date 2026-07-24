@@ -44,7 +44,9 @@ Ed25519 签名,并用 NSM attestation 把签名公钥 + PCR0 绑定到 AWS Nitro
 
 流式响应末尾自带一条 `event: tee.proof`;非流式 proof mode 可保存 `multipart/mixed`
 响应(第一段 raw response bytes,第二段 proof)。如果终端保存到的是 raw response body 后面直接接
-proof part 和 closing boundary,也可以使用。把响应材料存下来,用[**在线验证器 ↗**](https://focuxdot.github.io/proof-of-observation/tee-verify.html)
+proof part 和 closing boundary,也可以使用。慢速 SSE 响应可能在上游原文之前带有
+`: wokey-transport-keepalive-v1` 传输注释；验证器仅在剥离后的字节哈希等于 TEE 签名哈希时
+忽略这些精确匹配的前置注释。把响应材料存下来,用[**在线验证器 ↗**](https://focuxdot.github.io/proof-of-observation/tee-verify.html)
 (源码即 [`tee-verify.html`](tee-verify.html),在线页面逐字节一致、纯本地核对)或 `verifier/tee-verify-stream.ts`(CLI)逐关核:
 
 1. COSE/P-384 attestation 链到 **AWS Nitro 根**(根指纹你自己从 AWS 官网 pin)。

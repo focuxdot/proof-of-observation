@@ -373,9 +373,26 @@ be displayed to the user.
 ### 8.2 Verify the content bindings
 
 3. `SHA-256(my request body octets)` MUST equal `request-body-sha256`.
-4. `SHA-256(received response body octets)` MUST equal `response-body-sha256`.
+4. `SHA-256(received upstream response body octets)` MUST equal
+   `response-body-sha256`.
 
 Either mismatch → **fail** (the proof does not correspond to this exchange).
+
+For a Wokey SSE capture, an untrusted relay MAY prepend one or more exact
+transport-only records before the first upstream response octet:
+
+```text
+: wokey-transport-keepalive-v1\n\n
+```
+
+A Verifier MAY remove consecutive copies of that exact byte sequence beginning
+at byte offset zero, but MUST accept the removal only when the resulting
+candidate's SHA-256 equals the signed `response-body-sha256`. It MUST first test
+the unmodified body, MUST stop at the first non-matching byte, and MUST NOT
+remove near matches, generic comments, whitespace, or a matching record after
+upstream response bytes have begun. These relay keepalives are outside the
+Attester and Exchange Statement; every upstream response octet remains covered
+by the signed hash.
 
 ### 8.3 Verify Evidence and the key binding
 

@@ -59,7 +59,7 @@ export type AttestationVerifier = (doc: Buffer, opts?: { now?: number }) => Atte
 
 export interface TeeVerifyInput {
   expectedPcr0: string; // hex,审计公布、可由 reproducible-build 复算
-  responseBody: Buffer; // 你实际收到的完整响应体(已剥掉 tee.proof 流末事件)
+  responseBody: Buffer; // 上游原始响应体(已剥 tee.proof + 经签名哈希证明的传输 keepalive)
   proof: TeeProofWire;
   // 可选(full 档):你**自己发的请求体**,用来核对请求绑定(⑥)。
   requestBody?: Buffer;
@@ -193,13 +193,19 @@ function verifySignatureCheck(t: TeeProofWire, responseBody: Buffer): TeeCheck {
 
 // production 流式下发:relay 原生透传的上游 SSE 字节之后附一条流末事件
 //   event: tee.proof\ndata: {json}\n\n
-// 验证方必须先剥掉这条末尾事件,再对**其余字节**(= 飞地签名的上游原文)重算 H(respBody)。
+// 验证方先剥末尾 proof,再以签名哈希为闸剥固定前置 keepalive,还原飞地签名的上游原文。
 // 从末尾定位(proof 永远是最后一条事件),避免上游内容里偶现同名字串。
 export const TEE_PROOF_EVENT = 'tee.proof';
+// API relay transport-only comment written before the first upstream byte when a
+// slow native SSE request needs to stay alive through a proxy timeout. It is not
+// part of the upstream response signed by the enclave.
+export const WOKEY_SSE_TRANSPORT_KEEPALIVE_V1 = ': wokey-transport-keepalive-v1\n\n';
 
 export interface ParsedTeeProofStream {
   body: Buffer; // 上游原文(飞地签名的字节)
   proof?: TeeProofWire; // 末尾 tee.proof 事件(无则 undefined)
+  ignoredTransportKeepaliveBytes?: number;
+  ignoredTransportKeepaliveCount?: number;
   ignoredLeadingBlankBytes?: number; // 粘贴 body+proof 尾段时用户手动多加的开头空行,经 proof hash 证明后忽略
 }
 
@@ -222,7 +228,16 @@ export function parseTeeProofEvent(stream: string | Buffer | Uint8Array): Parsed
   if (!match) return { body: bytes };
   try {
     const proof = JSON.parse(match[1]) as TeeProofWire;
-    return { body: bytes.subarray(0, idx), proof };
+    const normalized = removeLeadingTransportKeepalivesIfSignedHashMatches(
+      Buffer.from(bytes.subarray(0, idx)),
+      proof,
+    );
+    return {
+      body: normalized.body,
+      proof,
+      ignoredTransportKeepaliveBytes: normalized.ignoredTransportKeepaliveBytes,
+      ignoredTransportKeepaliveCount: normalized.ignoredTransportKeepaliveCount,
+    };
   } catch {
     return { body: bytes };
   }
@@ -438,6 +453,38 @@ function removeLeadingBlankLinesIfSignedHashMatches(
       return { body: candidate, ignoredLeadingBlankBytes: offset };
     }
   }
+}
+
+function removeLeadingTransportKeepalivesIfSignedHashMatches(
+  body: Buffer,
+  proof?: TeeProofWire,
+): {
+  body: Buffer;
+  ignoredTransportKeepaliveBytes?: number;
+  ignoredTransportKeepaliveCount?: number;
+} {
+  const expected = typeof proof?.response_body_sha256 === 'string'
+    ? proof.response_body_sha256.toLowerCase()
+    : '';
+  if (!/^[a-f0-9]{64}$/.test(expected)) return { body };
+  if (sha256(body).toString('hex') === expected) return { body };
+
+  const marker = Buffer.from(WOKEY_SSE_TRANSPORT_KEEPALIVE_V1, 'utf8');
+  let offset = 0;
+  let count = 0;
+  while (body.subarray(offset, offset + marker.length).equals(marker)) {
+    offset += marker.length;
+    count += 1;
+    const candidate = Buffer.from(body.subarray(offset));
+    if (sha256(candidate).toString('hex') === expected) {
+      return {
+        body: candidate,
+        ignoredTransportKeepaliveBytes: offset,
+        ignoredTransportKeepaliveCount: count,
+      };
+    }
+  }
+  return { body };
 }
 
 function consumeLeadingBlankLine(bytes: Buffer, offset: number): number {

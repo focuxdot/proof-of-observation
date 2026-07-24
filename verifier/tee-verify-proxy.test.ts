@@ -7,7 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import http from 'node:http';
 import { generateKeyPairSync, randomBytes, sign as edSign } from 'node:crypto';
 import { createVerifyingProxy } from './tee-verify-proxy.ts';
-import { TEE_PROOF_EVENT, type AttestationVerifier } from './tee-verify-core.ts';
+import {
+  TEE_PROOF_EVENT,
+  WOKEY_SSE_TRANSPORT_KEEPALIVE_V1,
+  type AttestationVerifier,
+} from './tee-verify-core.ts';
 import { computeV2SigningMaterial } from './signing.ts';
 
 const PCR0 = 'aeb9e595deadbeef';
@@ -205,6 +209,40 @@ describe('createVerifyingProxy (fail-open)', () => {
 
     const res = await postThrough(proxyPort, '/v1/messages', '{"x":1}');
     expect(res.body).toBe(upstreamBody.toString('utf8')); // 整段逐字节还原,proof 已剥
+    expect(res.body).not.toContain('tee.proof');
+    expect(verdicts[0].ok, JSON.stringify(verdicts[0].checks)).toBe(true);
+  });
+
+  it('keeps raw passthrough coordinates aligned when a transport keepalive precedes a body larger than holdback', async () => {
+    const { privateKey, pubB64 } = newKey();
+    const line = 'event: chunk\ndata: ' + 'x'.repeat(120) + '\n\n';
+    const upstreamBody = Buffer.from(line.repeat(40), 'utf8');
+    const transportKeepalive = Buffer.from(WOKEY_SSE_TRANSPORT_KEEPALIVE_V1, 'utf8');
+    let relayNonce = '';
+    const upstream = track(http.createServer((_req, res) => {
+      relayNonce = randomBytes(16).toString('base64');
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(transportKeepalive);
+      for (let i = 0; i < upstreamBody.length; i += 700) {
+        res.write(upstreamBody.subarray(i, i + 700));
+      }
+      res.write(signProof({ nonce: relayNonce, body: upstreamBody, privateKey, pubB64 }));
+      res.end();
+    }));
+    const upPort = await listen(upstream);
+
+    const verdicts: any[] = [];
+    const proxy = track(createVerifyingProxy({
+      upstream: `http://127.0.0.1:${upPort}`,
+      expectedPcr0: PCR0,
+      holdback: 1024,
+      verifyAttestationDoc: stubAtt({ publicKey: pubB64, nonce: () => relayNonce }),
+      onVerdict: (v) => verdicts.push(v),
+    }));
+    const proxyPort = await listen(proxy);
+
+    const res = await postThrough(proxyPort, '/v1/messages', '{"x":1}');
+    expect(res.body).toBe(Buffer.concat([transportKeepalive, upstreamBody]).toString('utf8'));
     expect(res.body).not.toContain('tee.proof');
     expect(verdicts[0].ok, JSON.stringify(verdicts[0].checks)).toBe(true);
   });

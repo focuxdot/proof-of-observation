@@ -97,7 +97,10 @@ and the code is one conforming implementation of it.
 A streamed response carries a trailing `event: tee.proof`; non-streaming proof mode can be
 captured as a `multipart/mixed` body whose first part is the raw response bytes and second
 part is the proof. Terminal captures that contain the raw response body followed by the
-proof part and closing boundary are accepted too. Save the response capture, then:
+proof part and closing boundary are accepted too. Slow SSE captures may begin with
+transport-only `: wokey-transport-keepalive-v1` comments; the verifier removes only exact
+leading records whose removal is proven by the signed response hash. Save the response
+capture, then:
 
 ```bash
 # CLI

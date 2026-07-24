@@ -16,7 +16,7 @@ const end = js.indexOf('// v2 字段分解声明:与', start);
 if (start < 0 || end < 0) throw new Error('failed to locate tee-verify.html capture parser block');
 
 const parser = new Function(
-  js.slice(start, end) + '\nreturn { parseProofEventBytes, parseProofEventText, parseProofMultipartBytes, normalizePastedBodyBytes };',
+  js.slice(start, end) + '\nreturn { parseProofEventBytes, parseProofEventText, parseProofMultipartBytes, normalizePastedBodyBytes, normalizeSseTransportKeepalives };',
 )() as {
   parseProofEventBytes: (bytes: Uint8Array) => { bodyBytes: Uint8Array; proof: Record<string, unknown> } | null;
   parseProofEventText: (text: string) => { bodyBytes: Uint8Array; proof: Record<string, unknown> } | null;
@@ -26,6 +26,14 @@ const parser = new Function(
     proof?: Record<string, unknown>,
     allowLeadingBlankTrim?: boolean,
   ) => Promise<{ bodyBytes: Uint8Array; ignoredLeadingBytes: number }>;
+  normalizeSseTransportKeepalives: (
+    bodyBytes: Uint8Array,
+    proof?: Record<string, unknown>,
+  ) => Promise<{
+    bodyBytes: Uint8Array;
+    ignoredTransportKeepaliveBytes: number;
+    ignoredTransportKeepaliveCount: number;
+  }>;
 };
 
 const formatterStart = js.indexOf('function formatSseResponseBodyText');
@@ -247,13 +255,96 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
     expect(Buffer.from(parsed!.bodyBytes).toString('utf8')).not.toBe(body.replace(/\r\n/g, '\n'));
   });
 
+  it('proof-gates removal of leading transport keepalive comments', async () => {
+    const marker = ': wokey-transport-keepalive-v1\n\n';
+    const body = Buffer.from('event: message_start\ndata: {"type":"message_start"}\n\n', 'utf8');
+    const signedProof = {
+      ...proof,
+      response_body_sha256: createHash('sha256').update(body).digest('hex'),
+    };
+    const stream = Buffer.concat([
+      Buffer.from(marker.repeat(2), 'utf8'),
+      body,
+      Buffer.from(`event: tee.proof\ndata: ${JSON.stringify(signedProof)}\n\n`, 'utf8'),
+    ]);
+
+    const parsed = parser.parseProofEventBytes(new Uint8Array(stream));
+    const normalized = await parser.normalizeSseTransportKeepalives(parsed!.bodyBytes, parsed!.proof);
+
+    expect(Buffer.from(normalized.bodyBytes)).toEqual(body);
+    expect(normalized.ignoredTransportKeepaliveCount).toBe(2);
+    expect(normalized.ignoredTransportKeepaliveBytes).toBe(Buffer.byteLength(marker.repeat(2)));
+  });
+
+  it('preserves a matching leading upstream comment covered by the signed hash', async () => {
+    const marker = ': wokey-transport-keepalive-v1\n\n';
+    const body = Buffer.from(`${marker}event: message_start\ndata: {}\n\n`, 'utf8');
+    const signedProof = {
+      ...proof,
+      response_body_sha256: createHash('sha256').update(body).digest('hex'),
+    };
+    const parsed = parser.parseProofEventBytes(new Uint8Array(Buffer.concat([
+      body,
+      Buffer.from(`event: tee.proof\ndata: ${JSON.stringify(signedProof)}\n\n`, 'utf8'),
+    ])));
+
+    const normalized = await parser.normalizeSseTransportKeepalives(parsed!.bodyBytes, parsed!.proof);
+
+    expect(Buffer.from(normalized.bodyBytes)).toEqual(body);
+    expect(normalized.ignoredTransportKeepaliveCount).toBe(0);
+  });
+
+  it('does not remove near matches or markers after upstream bytes begin', async () => {
+    const marker = ': wokey-transport-keepalive-v1\n\n';
+    const body = Buffer.from('event: message_start\ndata: {}\n\n', 'utf8');
+    const signedProof = {
+      ...proof,
+      response_body_sha256: createHash('sha256').update(body).digest('hex'),
+    };
+    const near = Buffer.from(': wokey-transport-keepalive-v2\n\n', 'utf8');
+    const after = Buffer.concat([body, Buffer.from(marker, 'utf8')]);
+
+    const nearNormalized = await parser.normalizeSseTransportKeepalives(
+      new Uint8Array(Buffer.concat([near, body])),
+      signedProof,
+    );
+    const afterNormalized = await parser.normalizeSseTransportKeepalives(new Uint8Array(after), signedProof);
+
+    expect(Buffer.from(nearNormalized.bodyBytes)).toEqual(Buffer.concat([near, body]));
+    expect(nearNormalized.ignoredTransportKeepaliveCount).toBe(0);
+    expect(Buffer.from(afterNormalized.bodyBytes)).toEqual(after);
+    expect(afterNormalized.ignoredTransportKeepaliveCount).toBe(0);
+  });
+
   it('keeps file/drop SSE bytes byte-for-byte while parsing the proof as text', () => {
     const body = Buffer.from('curl prefix\nignored\n\nevent: message_start\r\ndata: hello\r\n\r\n', 'utf8');
     const suffix = Buffer.from(`event: tee.proof\r\ndata: ${JSON.stringify(proof)}\r\n\r\n`, 'utf8');
     const parsed = parser.parseProofEventBytes(new Uint8Array(Buffer.concat([body, suffix])));
 
     expect(parsed?.proof).toMatchObject(proof);
-    expect(Buffer.from(parsed!.bodyBytes)).toEqual(Buffer.from('event: message_start\r\ndata: hello\r\n\r\n', 'utf8'));
+    expect(Buffer.from(parsed!.bodyBytes)).toEqual(body);
+  });
+
+  it('does not discard an unsigned SSE event before a later transport keepalive', async () => {
+    const marker = Buffer.from(': wokey-transport-keepalive-v1\n\n', 'utf8');
+    const unsignedPrefix = Buffer.from('data: {"unsigned":true}\n\n', 'utf8');
+    const body = Buffer.from('event: message_stop\ndata: {}\n\n', 'utf8');
+    const signedProof = {
+      ...proof,
+      response_body_sha256: createHash('sha256').update(body).digest('hex'),
+    };
+    const parsed = parser.parseProofEventBytes(new Uint8Array(Buffer.concat([
+      unsignedPrefix,
+      marker,
+      body,
+      Buffer.from(`event: tee.proof\ndata: ${JSON.stringify(signedProof)}\n\n`, 'utf8'),
+    ])));
+
+    const normalized = await parser.normalizeSseTransportKeepalives(parsed!.bodyBytes, parsed!.proof);
+
+    expect(Buffer.from(parsed!.bodyBytes)).toEqual(Buffer.concat([unsignedPrefix, marker, body]));
+    expect(Buffer.from(normalized.bodyBytes)).toEqual(Buffer.concat([unsignedPrefix, marker, body]));
+    expect(normalized.ignoredTransportKeepaliveCount).toBe(0);
   });
 
   it('does not accept tee.proof when unsigned bytes follow the proof event', () => {
