@@ -55,26 +55,16 @@ enclave 的完整受度量 TCB 位于 [`enclave/`](enclave)；在固定工具链
 **当前生产发布版的规范 PCR0：**
 
 ```
-4bec69861c775a59278f2775f7e7eda8bf4a8c8b15c039c31dd675591e6054b7be5609ba8dcd716f330f6242b23ea8af
-```
-
-该生产值对应受度量源码 revision
-`19122df6e69d4256e84eb5cf5c875ec4a197bab3`。2026-07-14 在生产 aarch64 构建机清空缓存双构，
-两次均得到相同 PCR0；随后完成 EIF 切换，并用真实 Grok 响应的 attestation 核验通过
-AWS 证书链、PCR0、飞地公钥、nonce、签名覆盖的 `api.x.ai` host 与响应字节。此前的
-`650d3f81…a572` 已作废且从未上线。完整流程见
-[`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md)。
-
-**192-worker 容量候选（负载与真实证明门禁通过前不是生产值）：**
-
-```
 b1ec05804e579c60249d2f28ad186f1cc0fd3217dd8c42ddb6dbeb8ecc354487404b2ced02421d15da757b27c496f880
 ```
 
-该候选对应受度量源码 revision
+该生产值对应受度量源码 revision
 `2c6a2b4c584b968340c667050f885b5f96a3fa45`。2026-07-25 在 aarch64 构建机以
-Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双构，两次均得到上面的值。这里的发布不等于上线：
-容量、反例证明与真实响应验证通过前，客户端仍应信任当前生产 PCR0。
+Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双构，两次均得到上面的值；随后将192-worker
+EIF提升到4-vCPU / 4-GiB Nitro Enclave。线上完整证明门禁已核验AWS证书链、证书有效期、
+PCR0、飞地公钥、nonce、签名覆盖的 `tls.peet.ws` host、响应字节与请求体绑定，真实模型
+响应也已落库新PCR0和签名。上一生产值 `4bec6986…a8af` 作为历史值保留。完整流程见
+[`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md)。
 
 ## 协议规范
 

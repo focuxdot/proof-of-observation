@@ -61,29 +61,19 @@ measured TCB lives in [`enclave/`](enclave); built twice with a pinned toolchain
 **Canonical PCR0 of the current production release:**
 
 ```
-4bec69861c775a59278f2775f7e7eda8bf4a8c8b15c039c31dd675591e6054b7be5609ba8dcd716f330f6242b23ea8af
-```
-
-This production value corresponds to measured-source revision
-`19122df6e69d4256e84eb5cf5c875ec4a197bab3`. On 2026-07-14 the source was built twice
-from an empty builder cache on the production aarch64 build host; both builds produced the
-same PCR0. The EIF was then switched and a live Grok response attestation verified the AWS
-chain, PCR0, attested key, nonce, signed `api.x.ai` host and response bytes. The earlier
-`650d3f81…a572` candidate remains invalid and was never deployed. Full procedure:
-[`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
-
-**192-worker capacity candidate (not production until the load and live-proof gates pass):**
-
-```
 b1ec05804e579c60249d2f28ad186f1cc0fd3217dd8c42ddb6dbeb8ecc354487404b2ced02421d15da757b27c496f880
 ```
 
-This candidate corresponds to measured-source revision
+This production value corresponds to measured-source revision
 `2c6a2b4c584b968340c667050f885b5f96a3fa45`. On 2026-07-25 it was built twice
 from empty caches on an aarch64 host with Docker 29.1.3 and nitro-cli 1.4.5;
-both builds produced the value above. Publication here does not promote it:
-clients must continue trusting the current production PCR0 until the candidate
-passes capacity, negative-proof, and live-response verification.
+both builds produced the value above. The 192-worker EIF was then promoted on a
+4-vCPU / 4-GiB Nitro Enclave. The live full-proof gate verified the AWS chain,
+certificate validity, PCR0, attested key, nonce, signed `tls.peet.ws` host,
+response bytes, and request-body binding; live model responses also persisted
+the new PCR0 and signatures. The previous production PCR0 `4bec6986…a8af`
+remains historical. Full procedure:
+[`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
 
 ## Specification
 
