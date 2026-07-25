@@ -72,6 +72,19 @@ chain, PCR0, attested key, nonce, signed `api.x.ai` host and response bytes. The
 `650d3f81…a572` candidate remains invalid and was never deployed. Full procedure:
 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
 
+**192-worker capacity candidate (not production until the load and live-proof gates pass):**
+
+```
+b1ec05804e579c60249d2f28ad186f1cc0fd3217dd8c42ddb6dbeb8ecc354487404b2ced02421d15da757b27c496f880
+```
+
+This candidate corresponds to measured-source revision
+`2c6a2b4c584b968340c667050f885b5f96a3fa45`. On 2026-07-25 it was built twice
+from empty caches on an aarch64 host with Docker 29.1.3 and nitro-cli 1.4.5;
+both builds produced the value above. Publication here does not promote it:
+clients must continue trusting the current production PCR0 until the candidate
+passes capacity, negative-proof, and live-response verification.
+
 ## Specification
 
 The normative, implementation-independent protocol specification is

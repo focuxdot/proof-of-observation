@@ -18,6 +18,18 @@ TEE 自证的承重墙之一:用户验 attestation 时比对的 `expectedPcr0`,�
 > nonce、签名覆盖的 `api.x.ai` host 与响应字节。流式修复前的候选 `650d3f81…a572`
 > 已作废、从未上线。
 
+### 192-worker 容量候选
+
+```
+b1ec05804e579c60249d2f28ad186f1cc0fd3217dd8c42ddb6dbeb8ecc354487404b2ced02421d15da757b27c496f880
+```
+
+> 候选受度量源码 revision 为
+> `2c6a2b4c584b968340c667050f885b5f96a3fa45`。2026-07-25 在 aarch64 主机以
+> Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双构，`PCR0_A == PCR0_B` 且
+> `REPRO_RESULT=MATCH`。它在容量、反例证明与真实响应门禁通过前不是生产规范值；
+> 验证当前生产响应仍须使用上一节的 PCR0。
+
 > 飞地源逐字节敏感:改 `enclave/{Cargo.toml,Cargo.lock,Dockerfile,src/**}` 任一字节(**包括注释**)
 > 都会改 PCR0 → 须重走本流程产出新规范值。
 

@@ -65,6 +65,17 @@ AWS 证书链、PCR0、飞地公钥、nonce、签名覆盖的 `api.x.ai` host �
 `650d3f81…a572` 已作废且从未上线。完整流程见
 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md)。
 
+**192-worker 容量候选（负载与真实证明门禁通过前不是生产值）：**
+
+```
+b1ec05804e579c60249d2f28ad186f1cc0fd3217dd8c42ddb6dbeb8ecc354487404b2ced02421d15da757b27c496f880
+```
+
+该候选对应受度量源码 revision
+`2c6a2b4c584b968340c667050f885b5f96a3fa45`。2026-07-25 在 aarch64 构建机以
+Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双构，两次均得到上面的值。这里的发布不等于上线：
+容量、反例证明与真实响应验证通过前，客户端仍应信任当前生产 PCR0。
+
 ## 协议规范
 
 规范性的、实现无关的协议文本是
