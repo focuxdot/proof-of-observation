@@ -46,7 +46,7 @@ const CONTROL_IO_TIMEOUT: Duration = Duration::from_secs(300);
 const UPSTREAM_IO_TIMEOUT: Duration = Duration::from_secs(300);
 const ADMIN_TIMEOUT: Duration = Duration::from_secs(2);
 
-const N_WORKERS: usize = 64;
+const N_WORKERS: usize = 192;
 const QUEUE_CAP: usize = 256;
 const METRICS_PORT: u32 = 5006;
 
