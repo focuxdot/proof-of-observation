@@ -57,6 +57,29 @@ const RESP_CHUNK: u8 = 0x11;
 const RESP_TRAILER: u8 = 0x12;
 const STATS: u8 = 0x20;
 const ERR: u8 = 0x1f;
+pub(crate) const UPSTREAM_RESPONSE_STATUS_MISSING_CODE: &str = "upstream_response_status_missing";
+
+fn upstream_response_status_missing(message: impl AsRef<str>) -> String {
+    format!(
+        "{}: {}",
+        UPSTREAM_RESPONSE_STATUS_MISSING_CODE,
+        message.as_ref()
+    )
+}
+
+fn error_frame_payload(error: &str) -> Value {
+    if let Some(message) = error
+        .strip_prefix(UPSTREAM_RESPONSE_STATUS_MISSING_CODE)
+        .and_then(|rest| rest.strip_prefix(": "))
+    {
+        json!({
+            "code": UPSTREAM_RESPONSE_STATUS_MISSING_CODE,
+            "message": message,
+        })
+    } else {
+        json!({ "code": "enclave", "message": error })
+    }
+}
 
 #[derive(Deserialize)]
 struct Upstream {
@@ -766,8 +789,13 @@ fn handle(
         .map_err(|e| format!("TLS 写请求体失败: {}", e))?;
     tls.flush().ok();
 
-    let (head_bytes, leftover) = read_until_headers(&mut *tls)?;
-    let h = parse_headers(&head_bytes)?;
+    // The complete request has already crossed the TLS stream. If the peer now
+    // closes before a valid HTTP status line, its execution outcome is unknown:
+    // surface a structured fail-closed error so the relay cannot replay it via
+    // the non-attested renderer.
+    let (head_bytes, leftover) =
+        read_until_headers(&mut *tls).map_err(upstream_response_status_missing)?;
+    let h = parse_headers(&head_bytes).map_err(upstream_response_status_missing)?;
 
     write_frame(
         s,
@@ -923,13 +951,7 @@ fn worker(rx: Arc<Mutex<Receiver<VsockStream>>>, ctx: Arc<Ctx>) {
             Ok(Err(e)) => {
                 ctx.m.failed.fetch_add(1, Ordering::Relaxed);
                 eprintln!("handle error: {}", e);
-                let _ = write_frame(
-                    &mut s,
-                    ERR,
-                    json!({ "code": "enclave", "message": e })
-                        .to_string()
-                        .as_bytes(),
-                );
+                let _ = write_frame(&mut s, ERR, error_frame_payload(&e).to_string().as_bytes());
             }
             Err(_) => {
                 ctx.m.panicked.fetch_add(1, Ordering::Relaxed);
@@ -1312,5 +1334,36 @@ mod ordered_headers {
         assert!(parse_headers_ordered(&None).is_none());
         assert!(parse_headers_ordered(&Some(vec![vec![s("only-one")]])).is_none());
         assert!(parse_headers_ordered(&Some(vec![vec![s("a"), s("b"), s("c")]])).is_none());
+    }
+}
+
+#[cfg(test)]
+mod error_classification_tests {
+    use super::{
+        error_frame_payload, upstream_response_status_missing,
+        UPSTREAM_RESPONSE_STATUS_MISSING_CODE,
+    };
+
+    #[test]
+    fn emits_structured_status_missing_error_after_request_write() {
+        let encoded = upstream_response_status_missing("读响应头时连接关闭");
+        assert_eq!(
+            error_frame_payload(&encoded),
+            serde_json::json!({
+                "code": UPSTREAM_RESPONSE_STATUS_MISSING_CODE,
+                "message": "读响应头时连接关闭",
+            })
+        );
+    }
+
+    #[test]
+    fn keeps_pre_request_enclave_failures_degradable() {
+        assert_eq!(
+            error_frame_payload("TLS 初始化失败"),
+            serde_json::json!({
+                "code": "enclave",
+                "message": "TLS 初始化失败",
+            })
+        );
     }
 }

@@ -1,6 +1,7 @@
 // Synchronous bridge around h2 0.4.15. The blocking TLS stream runs in the h2
 // connection driver thread; short socket read timeouts surface as Pending so
 // stream completion can shut the driver down without leaking a thread.
+use crate::UPSTREAM_RESPONSE_STATUS_MISSING_CODE;
 use attest::tls_profile::H2Settings;
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, Method, Request, Uri};
@@ -243,9 +244,9 @@ pub fn execute<S: Read + Write + Send + Unpin + 'static, T: H2ResponseSink>(
         }
         drop(send_stream);
 
-        let response = rt
-            .block_on(response_future)
-            .map_err(|e| format!("h2 response: {e}"))?;
+        let response = rt.block_on(response_future).map_err(|e| {
+            format!("{UPSTREAM_RESPONSE_STATUS_MISSING_CODE}: h2 response headers: {e}")
+        })?;
         let status = response.status().as_u16();
         let headers = response
             .headers()
