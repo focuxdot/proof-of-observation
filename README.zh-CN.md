@@ -55,15 +55,14 @@ enclave 的完整受度量 TCB 位于 [`enclave/`](enclave)；在固定工具链
 **当前生产发布版的规范 PCR0：**
 
 ```
-b1ec05804e579c60249d2f28ad186f1cc0fd3217dd8c42ddb6dbeb8ecc354487404b2ced02421d15da757b27c496f880
+7e63882ec0215ae62af3712c6175cc6fc903a310a223a740c14cde56e2d4ac614c90a08240b33d0eb22d0351ba13a4a6
 ```
 
 该生产值对应受度量源码 revision
-`2c6a2b4c584b968340c667050f885b5f96a3fa45`。2026-07-25 在 aarch64 构建机以
-Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双构，两次均得到上面的值；随后将192-worker
-EIF提升到4-vCPU / 4-GiB Nitro Enclave。线上完整证明门禁已核验AWS证书链、证书有效期、
-PCR0、飞地公钥、nonce、签名覆盖的 `tls.peet.ws` host、响应字节与请求体绑定，真实模型
-响应也已落库新PCR0和签名。上一生产值 `4bec6986…a8af` 作为历史值保留。完整流程见
+`803d9aa74130e89abde4b5c81b19079c17a559eb`。2026-08-12 在 aarch64 构建机以
+Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双构，两次均得到上面的值。本版保持192-worker
+池不变，将受度量的控制/上游 I/O 兜底提升到1860秒，让 Platform 的1800秒响应空闲超时
+保持权威。上一生产值 `b1ec0580…f880` 作为历史值保留。完整流程见
 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md)。
 
 ## 协议规范

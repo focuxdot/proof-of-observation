@@ -61,18 +61,16 @@ measured TCB lives in [`enclave/`](enclave); built twice with a pinned toolchain
 **Canonical PCR0 of the current production release:**
 
 ```
-b1ec05804e579c60249d2f28ad186f1cc0fd3217dd8c42ddb6dbeb8ecc354487404b2ced02421d15da757b27c496f880
+7e63882ec0215ae62af3712c6175cc6fc903a310a223a740c14cde56e2d4ac614c90a08240b33d0eb22d0351ba13a4a6
 ```
 
 This production value corresponds to measured-source revision
-`2c6a2b4c584b968340c667050f885b5f96a3fa45`. On 2026-07-25 it was built twice
+`803d9aa74130e89abde4b5c81b19079c17a559eb`. On 2026-08-12 it was built twice
 from empty caches on an aarch64 host with Docker 29.1.3 and nitro-cli 1.4.5;
-both builds produced the value above. The 192-worker EIF was then promoted on a
-4-vCPU / 4-GiB Nitro Enclave. The live full-proof gate verified the AWS chain,
-certificate validity, PCR0, attested key, nonce, signed `tls.peet.ws` host,
-response bytes, and request-body binding; live model responses also persisted
-the new PCR0 and signatures. The previous production PCR0 `4bec6986…a8af`
-remains historical. Full procedure:
+both builds produced the value above. This release keeps the 192-worker pool and
+raises measured control/upstream I/O guards to 1860 seconds, leaving Platform's
+1800-second response-idle timeout authoritative. The previous production PCR0
+`b1ec0580…f880` remains historical. Full procedure:
 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
 
 ## Specification
