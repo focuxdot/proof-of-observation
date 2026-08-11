@@ -5,7 +5,7 @@
 // 把你的 LLM 客户端 baseURL 改指向本代理(http://127.0.0.1:8788),其余照常调用。代理对每次请求:
 //   ① 原样转发到真实上游(relay),逐字节回传给你的客户端 —— 流式不破(holdback 只压住流末)。
 //      不注入任何头:nonce 由 relay 端生成、随 proof 回(客户端不提供 —— 见 docs/TEE.md §5)。
-//   ② 流末剥 proof,再以签名哈希为闸剥固定前置 keepalive,还原上游原文走 v2 response-only 验证:
+//   ② 流末剥 proof,再以签名哈希为闸剥记录边界 keepalive,还原上游原文走 v2 response-only 验证:
 //      attestation 链 + PCR0 + 公钥绑定 + nonce 绑定 + 声明验签;并**读出签名覆盖的 upstream_host/path**。
 //   ③ 默认 fail-open:无论判定都把响应交给客户端,但把判定**大声打到本代理日志**(持续抽查/威慑)。
 //      `--enforce`:fail-closed —— 整段缓冲、验过才放行;有 proof 但验不过回 502(牺牲流式,换强阻断)。
@@ -137,7 +137,7 @@ export function createVerifyingProxy(opts: VerifyingProxyOptions): http.Server {
             ignoredTransportKeepaliveBytes = 0,
           } = parseTeeProofEvent(acc);
           // `body` is normalized for verification and may omit proof-gated
-          // leading transport keepalives. Client passthrough stays in `acc`'s
+          // boundary transport keepalives. Client passthrough stays in `acc`'s
           // raw coordinate space so an already-forwarded marker cannot shift
           // or truncate the remaining upstream response bytes.
           const rawBodyEnd = proof

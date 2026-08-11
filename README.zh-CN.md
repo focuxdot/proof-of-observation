@@ -89,8 +89,9 @@ PCR0、飞地公钥、nonce、签名覆盖的 `tls.peet.ws` host、响应字节�
 流式响应末尾会带一条 `event: tee.proof`;非流式 proof mode 可保存完整
 `multipart/mixed` 响应(第一段是 raw response bytes,第二段是 proof)。如果终端保存到的是
 raw response body 后面直接接 proof part 和 closing boundary,也可以直接验证。慢速 SSE
-响应开头可能包含传输层 `: wokey-transport-keepalive-v1` 注释；验证器只会在签名响应哈希
-能够证明剥离结果时忽略精确匹配的前置记录。保存响应材料后运行：
+响应在首个上游事件前或完整 SSE 记录之间可能包含传输层
+`: wokey-transport-keepalive-v1` 注释；验证器只会在签名响应哈希能够证明完整剥离结果时
+忽略位于记录边界的精确匹配记录。保存响应材料后运行：
 
 ```bash
 # CLI

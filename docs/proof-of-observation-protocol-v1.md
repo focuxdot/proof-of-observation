@@ -378,21 +378,23 @@ be displayed to the user.
 
 Either mismatch → **fail** (the proof does not correspond to this exchange).
 
-For a Wokey SSE capture, an untrusted relay MAY prepend one or more exact
-transport-only records before the first upstream response octet:
+For a Wokey SSE capture, an untrusted relay MAY insert one or more exact
+transport-only records before the first upstream response octet or between
+complete upstream SSE records:
 
 ```text
 : wokey-transport-keepalive-v1\n\n
 ```
 
-A Verifier MAY remove consecutive copies of that exact byte sequence beginning
-at byte offset zero, but MUST accept the removal only when the resulting
-candidate's SHA-256 equals the signed `response-body-sha256`. It MUST first test
-the unmodified body, MUST stop at the first non-matching byte, and MUST NOT
-remove near matches, generic comments, whitespace, or a matching record after
-upstream response bytes have begun. These relay keepalives are outside the
-Attester and Exchange Statement; every upstream response octet remains covered
-by the signed hash.
+A Verifier MAY remove copies of that exact byte sequence only at byte offset
+zero or immediately after an LF/LF or CRLF/CRLF SSE record boundary, but MUST
+accept the complete removal only when the resulting candidate's SHA-256 equals
+the signed `response-body-sha256`. It MUST first test the unmodified body and
+MUST NOT remove near matches, generic comments, whitespace, or a matching byte
+sequence inside an SSE record. These relay keepalives are outside the Attester
+and Exchange Statement; every upstream response octet remains covered by the
+signed hash. If a genuine upstream record uses this reserved exact marker, the
+hash gate fails closed rather than accepting altered response bytes.
 
 ### 8.3 Verify Evidence and the key binding
 

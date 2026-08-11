@@ -231,20 +231,35 @@ describe('parseTeeProofEvent', () => {
     expect(parsed.ignoredTransportKeepaliveCount).toBeUndefined();
   });
 
-  it('does not remove near matches or transport markers after upstream bytes begin', () => {
+  it('removes proof-gated transport keepalives between complete SSE records', () => {
+    const first = Buffer.from('event: message_start\ndata: {}\n\n', 'utf8');
+    const second = Buffer.from('event: message_stop\ndata: {}\n\n', 'utf8');
+    const upstream = Buffer.concat([first, second]);
+    const { proof } = makeSigned({ responseBody: upstream });
+    const suffix = Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8');
+    const marker = Buffer.from(WOKEY_SSE_TRANSPORT_KEEPALIVE_V1, 'utf8');
+
+    const parsed = parseTeeProofEvent(Buffer.concat([first, marker, second, suffix]));
+
+    expect(parsed.body).toEqual(upstream);
+    expect(parsed.ignoredTransportKeepaliveCount).toBe(1);
+    expect(parsed.ignoredTransportKeepaliveBytes).toBe(marker.byteLength);
+  });
+
+  it('does not remove near matches or exact marker bytes inside an SSE record', () => {
     const upstream = Buffer.from('event: message_start\ndata: {}\n\n', 'utf8');
     const { proof } = makeSigned({ responseBody: upstream });
     const suffix = Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8');
     const nearMatch = Buffer.from(': wokey-transport-keepalive-v2\n\n', 'utf8');
-    const markerAfterBody = Buffer.from(WOKEY_SSE_TRANSPORT_KEEPALIVE_V1, 'utf8');
+    const markerInsideRecord = Buffer.from(`event: note\ndata: ${WOKEY_SSE_TRANSPORT_KEEPALIVE_V1}`, 'utf8');
 
     const nearParsed = parseTeeProofEvent(Buffer.concat([nearMatch, upstream, suffix]));
-    const afterParsed = parseTeeProofEvent(Buffer.concat([upstream, markerAfterBody, suffix]));
+    const insideParsed = parseTeeProofEvent(Buffer.concat([markerInsideRecord, upstream, suffix]));
 
     expect(nearParsed.body).toEqual(Buffer.concat([nearMatch, upstream]));
     expect(nearParsed.ignoredTransportKeepaliveCount).toBeUndefined();
-    expect(afterParsed.body).toEqual(Buffer.concat([upstream, markerAfterBody]));
-    expect(afterParsed.ignoredTransportKeepaliveCount).toBeUndefined();
+    expect(insideParsed.body).toEqual(Buffer.concat([markerInsideRecord, upstream]));
+    expect(insideParsed.ignoredTransportKeepaliveCount).toBeUndefined();
   });
 
   it('does not strip an invalid tee.proof-looking suffix', () => {

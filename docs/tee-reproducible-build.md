@@ -50,7 +50,7 @@ b1ec05804e579c60249d2f28ad186f1cc0fd3217dd8c42ddb6dbeb8ecc354487404b2ced02421d15
 ## 第三方复算与比对(不信运营方)
 
 ```bash
-# 1. 复现当前生产值时 checkout 19122df6e69d4256e84eb5cf5c875ec4a197bab3
+# 1. 复现当前生产值时 checkout 2c6a2b4c584b968340c667050f885b5f96a3fa45
 # 2. 在对齐工具链的 aarch64 机器上双构(--no-cache),两次 PCR0 必须逐字节一致
 cd enclave
 docker build --no-cache -t attest:audit .

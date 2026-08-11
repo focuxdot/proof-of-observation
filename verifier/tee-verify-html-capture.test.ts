@@ -294,26 +294,32 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
     expect(normalized.ignoredTransportKeepaliveCount).toBe(0);
   });
 
-  it('does not remove near matches or markers after upstream bytes begin', async () => {
+  it('removes exact markers between SSE records but preserves near and in-record matches', async () => {
     const marker = ': wokey-transport-keepalive-v1\n\n';
-    const body = Buffer.from('event: message_start\ndata: {}\n\n', 'utf8');
+    const first = Buffer.from('event: message_start\ndata: {}\n\n', 'utf8');
+    const second = Buffer.from('event: message_stop\ndata: {}\n\n', 'utf8');
+    const body = Buffer.concat([first, second]);
     const signedProof = {
       ...proof,
       response_body_sha256: createHash('sha256').update(body).digest('hex'),
     };
     const near = Buffer.from(': wokey-transport-keepalive-v2\n\n', 'utf8');
-    const after = Buffer.concat([body, Buffer.from(marker, 'utf8')]);
+    const between = Buffer.concat([first, Buffer.from(marker, 'utf8'), second]);
+    const inside = Buffer.concat([Buffer.from(`event: note\ndata: ${marker}`, 'utf8'), body]);
 
     const nearNormalized = await parser.normalizeSseTransportKeepalives(
       new Uint8Array(Buffer.concat([near, body])),
       signedProof,
     );
-    const afterNormalized = await parser.normalizeSseTransportKeepalives(new Uint8Array(after), signedProof);
+    const betweenNormalized = await parser.normalizeSseTransportKeepalives(new Uint8Array(between), signedProof);
+    const insideNormalized = await parser.normalizeSseTransportKeepalives(new Uint8Array(inside), signedProof);
 
     expect(Buffer.from(nearNormalized.bodyBytes)).toEqual(Buffer.concat([near, body]));
     expect(nearNormalized.ignoredTransportKeepaliveCount).toBe(0);
-    expect(Buffer.from(afterNormalized.bodyBytes)).toEqual(after);
-    expect(afterNormalized.ignoredTransportKeepaliveCount).toBe(0);
+    expect(Buffer.from(betweenNormalized.bodyBytes)).toEqual(body);
+    expect(betweenNormalized.ignoredTransportKeepaliveCount).toBe(1);
+    expect(Buffer.from(insideNormalized.bodyBytes)).toEqual(inside);
+    expect(insideNormalized.ignoredTransportKeepaliveCount).toBe(0);
   });
 
   it('keeps file/drop SSE bytes byte-for-byte while parsing the proof as text', () => {

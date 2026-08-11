@@ -910,10 +910,9 @@ function parseProofEventBytes(bytes){
   for(let i=eventEnd;i<eventBlock.length;i++)if(!isAsciiWhitespaceByte(eventBlock[i]))return null;
   const proof=JSON.parse(dataLines.join('\n'));
   if(!isProofWire(proof))throw new Error(typeof L==='function'?L('tee.proof data 字段不是有效证明材料','tee.proof data field is not valid proof material'):'tee.proof data 字段不是有效证明材料');
-  // The capture starts at byte zero. Never search forward for an SSE event or
-  // keepalive: doing so could discard a meaningful unsigned prefix before the
-  // signed body. Exact transport keepalives are normalized later, only at
-  // offset zero and only when the signed response hash proves the removal.
+  // The capture starts at byte zero. Exact relay transport keepalives are
+  // normalized later only at SSE record boundaries and only when the signed
+  // response hash proves the complete removal.
   return {bodyBytes:before,proof};
 }
 function parseProofEventText(text){
@@ -1086,13 +1085,25 @@ async function normalizeSseTransportKeepalives(bodyBytes,proof){
   if(bytesToHex(await sha256(bodyBytes))===expected){
     return {bodyBytes,ignoredTransportKeepaliveBytes:0,ignoredTransportKeepaliveCount:0};
   }
-  let offset=0,count=0;
-  while(startsWithBytes(bodyBytes,WOKEY_SSE_TRANSPORT_KEEPALIVE_V1,offset)){
-    offset+=WOKEY_SSE_TRANSPORT_KEEPALIVE_V1.length;
+  const kept=[];
+  let searchOffset=0,copyOffset=0,count=0;
+  for(;;){
+    const index=findBytes(bodyBytes,WOKEY_SSE_TRANSPORT_KEEPALIVE_V1,searchOffset);
+    if(index<0)break;
+    const atRecordBoundary=index===0
+      ||(index>=2&&bodyBytes[index-2]===10&&bodyBytes[index-1]===10)
+      ||(index>=4&&bodyBytes[index-4]===13&&bodyBytes[index-3]===10&&bodyBytes[index-2]===13&&bodyBytes[index-1]===10);
+    if(!atRecordBoundary){searchOffset=index+1;continue;}
+    kept.push(bodyBytes.subarray(copyOffset,index));
+    copyOffset=index+WOKEY_SSE_TRANSPORT_KEEPALIVE_V1.length;
+    searchOffset=copyOffset;
     count++;
-    const candidate=bodyBytes.subarray(offset);
+  }
+  if(count){
+    kept.push(bodyBytes.subarray(copyOffset));
+    const candidate=concat(kept);
     if(bytesToHex(await sha256(candidate))===expected){
-      return {bodyBytes:candidate,ignoredTransportKeepaliveBytes:offset,ignoredTransportKeepaliveCount:count};
+      return {bodyBytes:candidate,ignoredTransportKeepaliveBytes:count*WOKEY_SSE_TRANSPORT_KEEPALIVE_V1.length,ignoredTransportKeepaliveCount:count};
     }
   }
   return {bodyBytes,ignoredTransportKeepaliveBytes:0,ignoredTransportKeepaliveCount:0};

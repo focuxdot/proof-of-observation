@@ -42,8 +42,10 @@ const MAX_HEAD: usize = 64 * 1024;
 const MAX_RESP: usize = 64 * 1024 * 1024;
 const MAX_REQ_HEAD: usize = 1024 * 1024;
 const MAX_REQ_FRAME: usize = 64 * 1024 * 1024;
-const CONTROL_IO_TIMEOUT: Duration = Duration::from_secs(300);
-const UPSTREAM_IO_TIMEOUT: Duration = Duration::from_secs(300);
+// Platform owns the 1800s response-idle classification. These measured-image
+// guards sit 60s above it so they clean up only if the relay fails to do so.
+const CONTROL_IO_TIMEOUT: Duration = Duration::from_secs(1860);
+const UPSTREAM_IO_TIMEOUT: Duration = Duration::from_secs(1860);
 const ADMIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 const N_WORKERS: usize = 192;

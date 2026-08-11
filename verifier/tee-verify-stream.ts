@@ -2,9 +2,9 @@
 //
 //   npx tsx tee-verify-stream.ts <captured-response> --pcr0 <hex> [--host <api.example.com>]
 //
-// 输入是你**实际收到的完整响应**:SSE(可选前置传输 keepalive + 上游字节 + 末尾
+// 输入是你**实际收到的完整响应**:SSE(可选记录边界传输 keepalive + 上游字节 + 末尾
 // event: tee.proof)或 multipart/mixed(第一段 raw response bytes,第二段 proof)。
-// 本工具:① 剥出 proof;② 以签名哈希为闸剥固定前置 keepalive,还原上游原文并重算 H(respBody);
+// 本工具:① 剥出 proof;② 以签名哈希为闸剥记录边界 keepalive,还原上游原文并重算 H(respBody);
 // ③ 调共享核心 v2 验证(attestation 链 + PCR0 + 公钥绑定 + nonce 绑定 + 声明验签 + 读 host/path)。
 //
 //   · --pcr0  (必填)审计公布、可由 reproducible-build 复算的镜像度量

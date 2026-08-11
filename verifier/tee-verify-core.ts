@@ -193,12 +193,12 @@ function verifySignatureCheck(t: TeeProofWire, responseBody: Buffer): TeeCheck {
 
 // production 流式下发:relay 原生透传的上游 SSE 字节之后附一条流末事件
 //   event: tee.proof\ndata: {json}\n\n
-// 验证方先剥末尾 proof,再以签名哈希为闸剥固定前置 keepalive,还原飞地签名的上游原文。
+// 验证方先剥末尾 proof,再以签名哈希为闸剥记录边界 keepalive,还原飞地签名的上游原文。
 // 从末尾定位(proof 永远是最后一条事件),避免上游内容里偶现同名字串。
 export const TEE_PROOF_EVENT = 'tee.proof';
-// API relay transport-only comment written before the first upstream byte when a
-// slow native SSE request needs to stay alive through a proxy timeout. It is not
-// part of the upstream response signed by the enclave.
+// API relay transport-only comment written before the first upstream byte or
+// between complete SSE records when a slow native stream must survive proxy idle.
+// It is not part of the upstream response signed by the enclave.
 export const WOKEY_SSE_TRANSPORT_KEEPALIVE_V1 = ': wokey-transport-keepalive-v1\n\n';
 
 export interface ParsedTeeProofStream {
@@ -228,7 +228,7 @@ export function parseTeeProofEvent(stream: string | Buffer | Uint8Array): Parsed
   if (!match) return { body: bytes };
   try {
     const proof = JSON.parse(match[1]) as TeeProofWire;
-    const normalized = removeLeadingTransportKeepalivesIfSignedHashMatches(
+    const normalized = removeTransportKeepalivesIfSignedHashMatches(
       Buffer.from(bytes.subarray(0, idx)),
       proof,
     );
@@ -455,7 +455,7 @@ function removeLeadingBlankLinesIfSignedHashMatches(
   }
 }
 
-function removeLeadingTransportKeepalivesIfSignedHashMatches(
+function removeTransportKeepalivesIfSignedHashMatches(
   body: Buffer,
   proof?: TeeProofWire,
 ): {
@@ -470,16 +470,34 @@ function removeLeadingTransportKeepalivesIfSignedHashMatches(
   if (sha256(body).toString('hex') === expected) return { body };
 
   const marker = Buffer.from(WOKEY_SSE_TRANSPORT_KEEPALIVE_V1, 'utf8');
-  let offset = 0;
+  const kept: Buffer[] = [];
+  let searchOffset = 0;
+  let copyOffset = 0;
   let count = 0;
-  while (body.subarray(offset, offset + marker.length).equals(marker)) {
-    offset += marker.length;
+  for (;;) {
+    const index = body.indexOf(marker, searchOffset);
+    if (index < 0) break;
+    const atRecordBoundary = index === 0
+      || (index >= 2 && body[index - 2] === 10 && body[index - 1] === 10)
+      || (index >= 4
+        && body[index - 4] === 13 && body[index - 3] === 10
+        && body[index - 2] === 13 && body[index - 1] === 10);
+    if (!atRecordBoundary) {
+      searchOffset = index + 1;
+      continue;
+    }
+    kept.push(Buffer.from(body.subarray(copyOffset, index)));
+    copyOffset = index + marker.length;
+    searchOffset = copyOffset;
     count += 1;
-    const candidate = Buffer.from(body.subarray(offset));
+  }
+  if (count > 0) {
+    kept.push(Buffer.from(body.subarray(copyOffset)));
+    const candidate = Buffer.concat(kept);
     if (sha256(candidate).toString('hex') === expected) {
       return {
         body: candidate,
-        ignoredTransportKeepaliveBytes: offset,
+        ignoredTransportKeepaliveBytes: count * marker.length,
         ignoredTransportKeepaliveCount: count,
       };
     }
