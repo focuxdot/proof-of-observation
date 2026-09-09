@@ -8,15 +8,15 @@ TEE 自证的承重墙之一:用户验 attestation 时比对的 `expectedPcr0`,�
 ## 规范 PCR0
 
 ```
-7e63882ec0215ae62af3712c6175cc6fc903a310a223a740c14cde56e2d4ac614c90a08240b33d0eb22d0351ba13a4a6
+437cbab8c2e5dd11a35ae5b062fe115623a013910b7c26b333e2b3af477944d630fb1dcd76fa9a9b1eefdf1d1021dec2
 ```
 
 > 这是当前生产值，对应受度量源码 revision
-> `803d9aa74130e89abde4b5c81b19079c17a559eb`。2026-08-12 在 aarch64 构建机以
+> `03fe2a3eb6d05e1ec94f7f52ac0521d42560a731`。2026-09-09 在 aarch64 构建机以
 > Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双次构建，两次一致（`REPRO_RESULT=MATCH`）；
 > `PCR0_A == PCR0_B`。本版保持192-worker池不变，将受度量的控制/上游 I/O 兜底从
 > 300秒提升到1860秒，让 Platform 的1800秒响应空闲超时保持权威。上一生产值
-> `b1ec0580…f880` 作为历史值保留。
+> `b1ec0580…f880` 作为历史值保留。本次 revision 同时加入 Grok 1.0.24 的混合密钥交换与签名配置。
 
 > 飞地源逐字节敏感:改 `enclave/{Cargo.toml,Cargo.lock,Dockerfile,src/**}` 任一字节(**包括注释**)
 > 都会改 PCR0 → 须重走本流程产出新规范值。
@@ -49,7 +49,7 @@ TEE 自证的承重墙之一:用户验 attestation 时比对的 `expectedPcr0`,�
 ## 第三方复算与比对(不信运营方)
 
 ```bash
-# 1. 复现当前生产值时 checkout 803d9aa74130e89abde4b5c81b19079c17a559eb
+# 1. 复现当前生产值时 checkout 03fe2a3eb6d05e1ec94f7f52ac0521d42560a731
 # 2. 在对齐工具链的 aarch64 机器上双构(--no-cache),两次 PCR0 必须逐字节一致
 cd enclave
 docker build --no-cache -t attest:audit .

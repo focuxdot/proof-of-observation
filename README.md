@@ -61,15 +61,16 @@ measured TCB lives in [`enclave/`](enclave); built twice with a pinned toolchain
 **Canonical PCR0 of the current production release:**
 
 ```
-7e63882ec0215ae62af3712c6175cc6fc903a310a223a740c14cde56e2d4ac614c90a08240b33d0eb22d0351ba13a4a6
+437cbab8c2e5dd11a35ae5b062fe115623a013910b7c26b333e2b3af477944d630fb1dcd76fa9a9b1eefdf1d1021dec2
 ```
 
 This production value corresponds to measured-source revision
-`803d9aa74130e89abde4b5c81b19079c17a559eb`. On 2026-08-12 it was built twice
+`03fe2a3eb6d05e1ec94f7f52ac0521d42560a731`. On 2026-09-09 it was built twice
 from empty caches on an aarch64 host with Docker 29.1.3 and nitro-cli 1.4.5;
 both builds produced the value above. This release keeps the 192-worker pool and
 raises measured control/upstream I/O guards to 1860 seconds, leaving Platform's
-1800-second response-idle timeout authoritative. The previous production PCR0
+1800-second response-idle timeout authoritative. It also adds the current Grok
+1.0.24 hybrid key-exchange and signature profile. The previous production PCR0
 `b1ec0580…f880` remains historical. Full procedure:
 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
 
