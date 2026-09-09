@@ -58,13 +58,13 @@ recomputable from public source** — not a number the operator asserts. The enc
 measured TCB lives in [`enclave/`](enclave); built twice with a pinned toolchain it yields a
 **byte-identical** PCR0.
 
-**Reproduced PCR0 of the latest measured source (pending production rollout):**
+**Canonical PCR0 of the current production release:**
 
 ```
 437cbab8c2e5dd11a35ae5b062fe115623a013910b7c26b333e2b3af477944d630fb1dcd76fa9a9b1eefdf1d1021dec2
 ```
 
-This reproduced value corresponds to measured-source revision
+This production value corresponds to measured-source revision
 `03fe2a3eb6d05e1ec94f7f52ac0521d42560a731`. On 2026-09-09 it was built twice
 from empty caches on an aarch64 host with Docker 29.1.3 and nitro-cli 1.4.5;
 both builds produced the value above. This revision preserves the 192-worker pool and
@@ -74,10 +74,7 @@ both builds produced the value above. This revision preserves the 192-worker poo
 `b1ec0580…f880` remains historical. Full procedure:
 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
 
-**Production status checked on 2026-09-09:** the running enclave still measures
-`7e63882ec0215ae62af3712c6175cc6fc903a310a223a740c14cde56e2d4ac614c90a08240b33d0eb22d0351ba13a4a6`,
-from measured-source revision `803d9aa74130e89abde4b5c81b19079c17a559eb`.
-The new value above must not be used as the production trust pin until the enclave is deployed.
+**Production status checked on 2026-09-09:** the running enclave measures the canonical value above.
 
 ## Specification
 

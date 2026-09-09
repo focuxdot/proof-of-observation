@@ -5,13 +5,13 @@
 TEE 自证的承重墙之一:用户验 attestation 时比对的 `expectedPcr0`,理想是**任何人都能从公开源独立重算
 出来**的值,而不是运营方单方面声称的数字。本文件钉死所有构建输入,并给出第三方复算与比对步骤。
 
-## 最新源码的复现 PCR0（待部署）
+## 规范 PCR0
 
 ```
 437cbab8c2e5dd11a35ae5b062fe115623a013910b7c26b333e2b3af477944d630fb1dcd76fa9a9b1eefdf1d1021dec2
 ```
 
-> 这是新源码的双构复现值，尚未部署，对应受度量源码 revision
+> 这是当前生产值，对应受度量源码 revision
 > `03fe2a3eb6d05e1ec94f7f52ac0521d42560a731`。2026-09-09 在 aarch64 构建机以
 > Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双次构建，两次一致（`REPRO_RESULT=MATCH`）；
 > `PCR0_A == PCR0_B`。本版保持192-worker池不变，将受度量的控制/上游 I/O 兜底从
@@ -21,9 +21,7 @@ TEE 自证的承重墙之一:用户验 attestation 时比对的 `expectedPcr0`,�
 > 飞地源逐字节敏感:改 `enclave/{Cargo.toml,Cargo.lock,Dockerfile,src/**}` 任一字节(**包括注释**)
 > 都会改 PCR0 → 须重走本流程产出新规范值。
 
-2026-09-09 核验时，运行中的生产飞地仍为旧值
-`7e63882ec0215ae62af3712c6175cc6fc903a310a223a740c14cde56e2d4ac614c90a08240b33d0eb22d0351ba13a4a6`，
-对应 revision `803d9aa74130e89abde4b5c81b19079c17a559eb`。新镜像部署前保留此生产信任值。
+2026-09-09 已核验运行中的生产飞地使用上述规范 PCR0。
 
 ## 钉死的输入(改任一项 PCR0 都会变)
 
