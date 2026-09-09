@@ -19,13 +19,23 @@ pub fn connect(
         CertPolicy::WebpkiRoots => roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned()),
     }
     let mut provider = rustls::crypto::aws_lc_rs::default_provider();
-    // Grok 0.2.101 未启用 rustls 的 PQ group：supported_groups 固定 29,23,24。
-    provider.kx_groups = vec![
-        rustls::crypto::aws_lc_rs::kx_group::X25519,
-        rustls::crypto::aws_lc_rs::kx_group::SECP256R1,
-        rustls::crypto::aws_lc_rs::kx_group::SECP384R1,
-    ];
-    provider.signature_verification_algorithms = grok_signature_algorithms();
+    // Grok 0.2.101 used classical groups only. Starting with 1.0.24
+    // (spec #11), the official CLI enables X25519MLKEM768 first.
+    provider.kx_groups = if profile.spec_id == 11 {
+        vec![
+            rustls::crypto::aws_lc_rs::kx_group::X25519MLKEM768,
+            rustls::crypto::aws_lc_rs::kx_group::X25519,
+            rustls::crypto::aws_lc_rs::kx_group::SECP256R1,
+            rustls::crypto::aws_lc_rs::kx_group::SECP384R1,
+        ]
+    } else {
+        vec![
+            rustls::crypto::aws_lc_rs::kx_group::X25519,
+            rustls::crypto::aws_lc_rs::kx_group::SECP256R1,
+            rustls::crypto::aws_lc_rs::kx_group::SECP384R1,
+        ]
+    };
+    provider.signature_verification_algorithms = grok_signature_algorithms(profile.spec_id == 11);
     let versions: &[&'static rustls::SupportedProtocolVersion] = match profile.min_negotiated {
         TlsVersion::Tls12 => &[&rustls::version::TLS13, &rustls::version::TLS12],
         TlsVersion::Tls13 => &[&rustls::version::TLS13],
@@ -43,15 +53,17 @@ pub fn connect(
     Ok(StreamOwned::new(conn, sock))
 }
 
-fn grok_signature_algorithms() -> rustls::crypto::WebPkiSupportedAlgorithms {
-    static ALGS: OnceLock<rustls::crypto::WebPkiSupportedAlgorithms> = OnceLock::new();
-    *ALGS.get_or_init(|| {
+fn grok_signature_algorithms(include_p521: bool) -> rustls::crypto::WebPkiSupportedAlgorithms {
+    static LEGACY: OnceLock<rustls::crypto::WebPkiSupportedAlgorithms> = OnceLock::new();
+    static CURRENT: OnceLock<rustls::crypto::WebPkiSupportedAlgorithms> = OnceLock::new();
+    let slot = if include_p521 { &CURRENT } else { &LEGACY };
+    *slot.get_or_init(|| {
         let base = rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms;
         let mapping = base
             .mapping
             .iter()
             .copied()
-            .filter(|(scheme, _)| *scheme != SignatureScheme::ECDSA_NISTP521_SHA512)
+            .filter(|(scheme, _)| include_p521 || *scheme != SignatureScheme::ECDSA_NISTP521_SHA512)
             .collect::<Vec<_>>();
         rustls::crypto::WebPkiSupportedAlgorithms {
             all: base.all,
