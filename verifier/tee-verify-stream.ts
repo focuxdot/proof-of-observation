@@ -33,7 +33,7 @@ if (!capturePath || !pcr0) {
 }
 
 const streamBytes = readFileSync(capturePath);
-const { body, proof, ignoredTransportKeepaliveCount } = parseTeeProofCapture(streamBytes);
+const { body, proof, ignoredTransportKeepaliveCount, restoredLfLineEndings, savedFileEncoding } = parseTeeProofCapture(streamBytes);
 if (!proof) {
   console.error('❌ 未在响应中找到可验证的 tee.proof —— 该响应未自证(可能走了降级/transform 路径,或 proof 被中间层吞掉)。');
   process.exit(1);
@@ -53,6 +53,14 @@ console.log('绑定公钥  :', result.attestation.publicKey);
 console.log('上游 host :', result.provenance.upstreamHost, result.provenance.upstreamPath);
 console.log('状态/类型 :', `${result.provenance.httpStatus} · ${result.provenance.respContentType}`);
 console.log('响应字节  :', `${body.byteLength} B(已剥离流末 tee.proof${ignoredTransportKeepaliveCount ? ` + ${ignoredTransportKeepaliveCount} 条传输 keepalive` : ''})`);
+if (savedFileEncoding) {
+  console.log('文件编码  :', savedFileEncoding === 'utf-8-bom'
+    ? '开头有 UTF-8 BOM(保存工具加的),已去掉再验证'
+    : `文件是 ${savedFileEncoding.toUpperCase()}(多为 Windows PowerShell 5.1 的 > 重定向),已转回 UTF-8 再验证;含中文等非 ASCII 内容时 PowerShell 可能已改坏字节,哈希会对不上,请用 curl.exe -o 重新保存`);
+}
+if (restoredLfLineEndings) {
+  console.log('换行还原  :', `文件里 ${restoredLfLineEndings} 处换行是 CRLF(保存工具转换的),还原为 LF 后与签名哈希一致;事件内容未变。下次请用 curl -o 直接写文件`);
+}
 console.log('──');
 for (const c of result.checks) console.log(`  ${c.ok ? '✅' : '❌'} ${String(c.name).padEnd(6, '　')} ${c.detail}`);
 console.log(`  判定: ${result.ok ? '✅ 全过——真飞地跑审计镜像、签了你收到的这段响应(未篡改),host 已签名覆盖' : '❌ 校验失败'}`);

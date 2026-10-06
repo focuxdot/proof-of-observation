@@ -207,6 +207,46 @@ export interface ParsedTeeProofStream {
   ignoredTransportKeepaliveBytes?: number;
   ignoredTransportKeepaliveCount?: number;
   ignoredLeadingBlankBytes?: number; // 粘贴 body+proof 尾段时用户手动多加的开头空行,经 proof hash 证明后忽略
+  restoredLfLineEndings?: number; // 保存时被工具(Windows 重定向/记事本)改成 CRLF 的换行数,经 proof hash 证明后还原为 LF
+  savedFileEncoding?: SavedCaptureEncoding; // 文件被保存工具转了编码,已先转回 UTF-8 再解析(结果仍由签名哈希判定)
+}
+
+// 抓包文件的文本编码被保存工具改过:Windows PowerShell 5.1 的 `>` 重定向写 UTF-16LE(带 BOM),
+// 记事本等可能在开头加 UTF-8 BOM。上游 SSE / multipart 是不带 BOM 的 UTF-8,原样字节不可能是这两种形态,
+// 所以先转回 UTF-8 再解析不会让本应通过的响应失败;转回后是否就是签名覆盖的字节,仍由 response hash 判定。
+export type SavedCaptureEncoding = 'utf-8-bom' | 'utf-16le' | 'utf-16be';
+
+export function decodeSavedCapture(bytes: Buffer): { bytes: Buffer; encoding?: SavedCaptureEncoding } {
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return { bytes: Buffer.from(bytes.subarray(3)), encoding: 'utf-8-bom' };
+  }
+  let encoding: 'utf-16le' | 'utf-16be' | undefined;
+  let start = 0;
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    encoding = 'utf-16le';
+    start = 2;
+  } else if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    encoding = 'utf-16be';
+    start = 2;
+  } else if (looksLikeBomlessUtf16(bytes, 1)) {
+    encoding = 'utf-16le';
+  } else if (looksLikeBomlessUtf16(bytes, 0)) {
+    encoding = 'utf-16be';
+  }
+  if (!encoding) return { bytes };
+  const units = Buffer.from(bytes.subarray(start, bytes.length - ((bytes.length - start) % 2)));
+  if (encoding === 'utf-16be') units.swap16();
+  return { bytes: Buffer.from(new TextDecoder('utf-16le').decode(units), 'utf8'), encoding };
+}
+
+// 无 BOM 的 UTF-16:开头 32 个码元都是 ASCII(高字节为 0、低字节非 0)。zeroAt=1 为 LE,0 为 BE。
+function looksLikeBomlessUtf16(bytes: Buffer, zeroAt: 0 | 1): boolean {
+  if (bytes.length < 8 || bytes.length % 2 !== 0) return false;
+  const end = Math.min(bytes.length, 64);
+  for (let i = 0; i < end; i += 2) {
+    if (bytes[i + zeroAt] !== 0 || bytes[i + 1 - zeroAt] === 0) return false;
+  }
+  return true;
 }
 
 type MultipartPart = {
@@ -244,9 +284,12 @@ export function parseTeeProofEvent(stream: string | Buffer | Uint8Array): Parsed
 }
 
 export function parseTeeProofCapture(stream: string | Buffer | Uint8Array, contentType?: string): ParsedTeeProofStream {
-  const parsedSse = parseTeeProofEvent(stream);
-  if (parsedSse.proof) return parsedSse;
-  return parseTeeProofMultipartResponse(stream, contentType) ?? parsedSse;
+  const decoded = typeof stream === 'string' ? { bytes: teeCaptureBytes(stream) } : decodeSavedCapture(teeCaptureBytes(stream));
+  const withEncoding = (parsed: ParsedTeeProofStream): ParsedTeeProofStream =>
+    decoded.encoding ? { ...parsed, savedFileEncoding: decoded.encoding } : parsed;
+  const parsedSse = parseTeeProofEvent(decoded.bytes);
+  if (parsedSse.proof) return withEncoding(restoreLfLineEndingsIfSignedHashMatches(parsedSse));
+  return withEncoding(parseTeeProofMultipartResponse(decoded.bytes, contentType) ?? parsedSse);
 }
 
 export function parseTeeProofMultipartResponse(
@@ -503,6 +546,39 @@ function removeTransportKeepalivesIfSignedHashMatches(
     }
   }
   return { body };
+}
+
+// 落盘的抓包文件(不是在线代理看到的字节)常被 Windows 工具把 LF 改成 CRLF:PowerShell 的 `>` 重定向、
+// 记事本另存等。上游 SSE 只用 LF,换行只出现在记录分隔处(JSON 里的换行是转义的),所以把 CRLF 还原成 LF
+// 不改动任何事件内容;仍以签名哈希为闸,还原后对上签名覆盖的 hash 才采用,否则原样返回、照常判失败。
+function restoreLfLineEndingsIfSignedHashMatches(parsed: ParsedTeeProofStream): ParsedTeeProofStream {
+  const expected = typeof parsed.proof?.response_body_sha256 === 'string'
+    ? parsed.proof.response_body_sha256.toLowerCase()
+    : '';
+  if (!/^[a-f0-9]{64}$/.test(expected)) return parsed;
+  if (sha256(parsed.body).toString('hex') === expected) return parsed;
+  const crlf = Buffer.from('\r\n', 'utf8');
+  const parts: Buffer[] = [];
+  let copyOffset = 0;
+  let count = 0;
+  for (;;) {
+    const index = parsed.body.indexOf(crlf, copyOffset);
+    if (index < 0) break;
+    parts.push(Buffer.from(parsed.body.subarray(copyOffset, index)), Buffer.from('\n', 'utf8'));
+    copyOffset = index + 2;
+    count += 1;
+  }
+  if (count === 0) return parsed;
+  parts.push(Buffer.from(parsed.body.subarray(copyOffset)));
+  const normalized = removeTransportKeepalivesIfSignedHashMatches(Buffer.concat(parts), parsed.proof);
+  if (sha256(normalized.body).toString('hex') !== expected) return parsed;
+  return {
+    body: normalized.body,
+    proof: parsed.proof,
+    ignoredTransportKeepaliveBytes: normalized.ignoredTransportKeepaliveBytes,
+    ignoredTransportKeepaliveCount: normalized.ignoredTransportKeepaliveCount,
+    restoredLfLineEndings: count,
+  };
 }
 
 function consumeLeadingBlankLine(bytes: Buffer, offset: number): number {

@@ -104,7 +104,13 @@ part is the proof. Terminal captures that contain the raw response body followed
 proof part and closing boundary are accepted too. Slow SSE captures may contain
 transport-only `: wokey-transport-keepalive-v1` comments before the first upstream event
 or between complete SSE records; the verifier removes only exact boundary records whose
-complete removal is proven by the signed response hash. Save the response capture, then:
+complete removal is proven by the signed response hash. If a saved SSE file had its LF line
+endings rewritten to CRLF by the saving tool (PowerShell `>` redirection or Notepad on Windows),
+the verifier restores LF only when the restored bytes match the signed response hash, and says
+so. Files saved as UTF-16 (Windows PowerShell 5.1 `>`) or with a leading UTF-8 BOM are
+converted back to UTF-8 before parsing, with a notice; the signed response hash still decides
+the result, and PowerShell 5.1 may already have damaged non-ASCII text, which then fails.
+Save captures with `curl -o` (`curl.exe -o` on Windows), then:
 
 ```bash
 # CLI

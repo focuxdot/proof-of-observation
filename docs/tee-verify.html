@@ -1108,6 +1108,50 @@ async function normalizeSseTransportKeepalives(bodyBytes,proof){
   }
   return {bodyBytes,ignoredTransportKeepaliveBytes:0,ignoredTransportKeepaliveCount:0};
 }
+// 存成文件再上传的抓包常被 Windows 工具把 LF 改成 CRLF(PowerShell 的 > 重定向、记事本另存等)。
+// 上游 SSE 只用 LF,换行只出现在记录分隔处(JSON 里的换行是转义的),还原成 LF 不改动任何事件内容;
+// 仍以签名哈希为闸:还原后对上签名覆盖的 hash 才采用,否则原样返回、照常判失败。
+async function normalizeSseLineEndings(bodyBytes,proof){
+  const none={bodyBytes,restoredLfLineEndings:0,ignoredTransportKeepaliveBytes:0,ignoredTransportKeepaliveCount:0};
+  if(!proof || !validSha256Hex(proof.response_body_sha256))return none;
+  const expected=String(proof.response_body_sha256).toLowerCase();
+  if(bytesToHex(await sha256(bodyBytes))===expected)return none;
+  const parts=[],lf=te.encode('\n'),crlf=te.encode('\r\n');
+  let copyOffset=0,count=0;
+  for(;;){
+    const index=findBytes(bodyBytes,crlf,copyOffset);
+    if(index<0)break;
+    parts.push(bodyBytes.subarray(copyOffset,index),lf);
+    copyOffset=index+2;
+    count++;
+  }
+  if(!count)return none;
+  parts.push(bodyBytes.subarray(copyOffset));
+  const normalized=await normalizeSseTransportKeepalives(concat(parts),proof);
+  if(bytesToHex(await sha256(normalized.bodyBytes))!==expected)return none;
+  return {...normalized,restoredLfLineEndings:count};
+}
+// 文件编码被保存工具改过:Windows PowerShell 5.1 的 > 重定向写 UTF-16LE(带 BOM),记事本等可能在开头加 UTF-8 BOM。
+// 上游 SSE / multipart 是不带 BOM 的 UTF-8,原样字节不可能是这两种形态,所以先转回 UTF-8 再解析
+// 不会让本应通过的响应失败;转回后是否就是签名覆盖的字节,仍由 response hash 判定。
+function looksLikeBomlessUtf16(bytes,zeroAt){
+  if(bytes.length<8||bytes.length%2!==0)return false;
+  const end=Math.min(bytes.length,64);
+  for(let i=0;i<end;i+=2)if(bytes[i+zeroAt]!==0||bytes[i+1-zeroAt]===0)return false;
+  return true;
+}
+function decodeSavedCapture(bytes){
+  if(bytes[0]===0xef&&bytes[1]===0xbb&&bytes[2]===0xbf)return {bytes:bytes.subarray(3),encoding:'utf-8-bom'};
+  let encoding=null,start=0;
+  if(bytes[0]===0xff&&bytes[1]===0xfe){encoding='utf-16le';start=2;}
+  else if(bytes[0]===0xfe&&bytes[1]===0xff){encoding='utf-16be';start=2;}
+  else if(looksLikeBomlessUtf16(bytes,1))encoding='utf-16le';
+  else if(looksLikeBomlessUtf16(bytes,0))encoding='utf-16be';
+  if(!encoding)return {bytes,encoding:null};
+  const units=new Uint8Array(bytes.subarray(start,bytes.length-((bytes.length-start)%2)));
+  if(encoding==='utf-16be')for(let i=0;i<units.length;i+=2){const b=units[i];units[i]=units[i+1];units[i+1]=b;}
+  return {bytes:te.encode(new TextDecoder('utf-16le').decode(units)),encoding};
+}
 
 // v2 字段分解声明:与 verifier/signing.ts buildV2Statement 逐字节一致(golden 向量锁)。
 function pathNoQuery(p){const s=p||'';const q=s.indexOf('?');return q>=0?s.slice(0,q):s;}
@@ -1532,6 +1576,7 @@ const I18N={
     streamTitle:'流式请求 · 保存 response.sse', multipartTitle:'非流式请求 · 保存 response.multipart',
     streamIntro:'保存完整 SSE 响应；慢请求开头可能有传输 keepalive，末尾会包含 <code>event: tee.proof</code>。',
     multipartIntro:'开启 multipart proof 模式，保存完整 <code>multipart/mixed</code> 响应。',
+    saveIntact:'用 <code>-o</code> 让 curl 直接写文件。Windows 上请用 <code>curl.exe</code>，不要用 PowerShell 的 <code>&gt;</code> 重定向或记事本另存：它们会改换行或编码。',
     exampleTitle:'请求示例', streamTab:'流式 response.sse', multipartTab:'非流式 response.multipart',
     requestModeLabel:'请求方式', apiFormatLabel:'API 格式', messagesTab:'Messages', responsesTab:'Responses',
     messagesFormatNote:'Messages 格式使用 <code>messages</code>，保留 <code>max_tokens</code>。',
@@ -1550,7 +1595,7 @@ const I18N={
     checkSigOk:'响应签名通过', checkSigBad:'响应签名失败',
     checkSigOkDetail:'来源、模型与正文 hash 被签名覆盖', checkSigBadDetail:'来源或响应 hash 的签名无法验证',
     checkHashOk:'正文 hash 匹配', checkHashBad:'正文 hash 不匹配',
-    checkHashOkDetail:'还原后的上游正文字节未被篡改', checkHashBadDetail:'还原后的上游正文字节与签名覆盖的 hash 不一致',
+    checkHashOkDetail:'还原后的上游正文字节未被篡改', checkHashBadDetail:'还原后的上游正文字节与签名覆盖的 hash 不一致。如果响应是存成文件再上传的，也可能是保存工具改了字节（例如编码转换），请用 curl -o 直接写文件后重试',
     claimedModel:'声称模型', model:'模型', verifyTime:'验证时间', notRecorded:'未记录',
     sourceLabel:'开源验证来源', localOnly:'纯本地 WebCrypto · 无网络请求',
     rootPin:'（真 Nitro：AWS 根由页面内置 SHA-256 指纹 pin，无需另给公钥）',
@@ -1559,7 +1604,7 @@ const I18N={
     multipartLoaded:(ignored,got)=>'已识别 multipart 响应'+ignored+(got?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0'),
     ignoredLeading:(n)=>'，已忽略粘贴开头 '+n+' 字节空行',
     proofOnlyLoad:(got)=>'已识别 tee.proof data'+(got?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0')+'；缺少前面的 SSE 响应正文，不能完成验签',
-    sseLoaded:(got,count)=>'已识别完整 SSE 响应'+(count?'，已按签名哈希忽略 '+count+' 条传输 keepalive':'')+(got?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0'),
+    sseLoaded:(got,count,crlf)=>'已识别完整 SSE 响应'+(count?'，已按签名哈希忽略 '+count+' 条传输 keepalive':'')+(crlf?'，文件里 '+crlf+' 处换行被保存工具改成了 CRLF，已按签名哈希还原为 LF':'')+(got?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0'),
     proofParseFailed:(msg)=>'⚠️ tee.proof 解析失败：'+msg,
     invalidJsonOrSse:'⚠️ 不是合法 JSON，也不是完整 SSE',
     bundleRecognized:(got)=>'已识别响应包'+(got?'，并读取审计 PCR0':'，但未找到审计 PCR0'),
@@ -1570,7 +1615,12 @@ const I18N={
     intoAtt:'粘进 att.b64', saveBundle:'存成 bundle.json', intoResp:'粘进 resp.b64',
     copied:(n,h)=>'✓ 已复制('+n+' 字符)—— '+h, copyFailed:'✕ 复制失败,请手动取',
     missingBodyTitle:'⚠️ 缺响应正文', missingBodyText:(hash)=>'这份材料里的 <span class="dhash" style="padding:1px 6px">'+hash+'</span> 已被TEE签名覆盖,但你没有提供响应正文,所以本页不能重算 SHA-256 来证明“你看到的响应字节”就是它。',
-    responseBodyBytes:'响应体(验证还原的上游字节)', bytes:(n)=>n+' 字节', empty:'(空)', clickFull:'…点击看全文 ▸', fullBodyTitle:'点击查看完整响应体',
+    responseBodyBytes:'响应体(验证还原的上游字节)', bytes:(n)=>n+' 字节', empty:'(空)', clickFull:'…点击看全文 ▸',
+    savedEncodingLoad:(enc)=>enc==='utf-8-bom'?'；文件开头有保存工具加的 UTF-8 BOM，已去掉再验证':'；文件是 '+enc.toUpperCase()+' 编码（多为 Windows PowerShell 5.1 的 > 重定向），已转回 UTF-8 再验证',
+    savedEncodingNote:(enc,ok)=>enc==='utf-8-bom'
+      ?'你上传的文件开头有 3 字节 UTF-8 BOM（保存工具加的），已去掉；它不属于响应内容。'
+      :'你上传的文件是 '+enc.toUpperCase()+' 编码（多为 Windows PowerShell 5.1 的 > 重定向），这里已转回 UTF-8。'+(ok?'转回后与签名覆盖的 hash 一致。':'如果响应里有中文等非 ASCII 字符，PowerShell 保存时可能已经改坏了这些字节，请用 curl.exe -o 重新保存后再验证。'),
+    restoredLfNote:(n)=>'你上传的文件里有 '+n+' 处换行是 CRLF（多为 Windows 保存工具转换），这里已还原为上游原本的 LF：只动换行符，事件内容一个字节没改，还原后与签名覆盖的 hash 一致。', fullBodyTitle:'点击查看完整响应体',
     compareSigned:(signed,ok)=>'对比签名覆盖的 <span class="dhash" style="padding:1px 6px">'+signed+'</span> → '+(ok?'<b class="okc">一致 ✓</b>':'<b class="badc">不一致 ✗ · 这段被改过</b>'),
     missingPcrTitle:'⚠️ 缺少审计 PCR0', missingPcrBody:'请粘贴或上传包含 expectedPcr0 / pcr0 / proof.pcr0 的响应包或 trust 文件后再验证。',
     verifying1:'🔄 验证中 —— 正在你本地解析 attestation、核验证书链和签名…',
@@ -1626,6 +1676,7 @@ const I18N={
     streamTitle:'Streaming request · save response.sse', multipartTitle:'Non-streaming request · save response.multipart',
     streamIntro:'Save the complete SSE response; slow requests may start with transport keepalives, and the final event contains <code>event: tee.proof</code>.',
     multipartIntro:'Enable multipart proof mode and save the full <code>multipart/mixed</code> response.',
+    saveIntact:'Use <code>-o</code> so curl writes the file itself. On Windows, use <code>curl.exe</code> and avoid PowerShell <code>&gt;</code> redirection or re-saving in Notepad: they change line endings or encoding.',
     exampleTitle:'Request examples', streamTab:'Streaming response.sse', multipartTab:'Non-streaming response.multipart',
     requestModeLabel:'Request mode', apiFormatLabel:'API format', messagesTab:'Messages', responsesTab:'Responses',
     messagesFormatNote:'Messages format uses <code>messages</code> and keeps <code>max_tokens</code>.',
@@ -1644,7 +1695,7 @@ const I18N={
     checkSigOk:'Response signature passed', checkSigBad:'Response signature failed',
     checkSigOkDetail:'Source, model, and response-body hash are covered by the signature', checkSigBadDetail:'The source or response hash signature could not be verified',
     checkHashOk:'Response-body hash matched', checkHashBad:'Response-body hash mismatch',
-    checkHashOkDetail:'The reconstructed upstream response bytes were not tampered with', checkHashBadDetail:'The reconstructed upstream response bytes do not match the signed hash',
+    checkHashOkDetail:'The reconstructed upstream response bytes were not tampered with', checkHashBadDetail:'The reconstructed upstream response bytes do not match the signed hash. If the response was saved to a file first, the saving tool may have changed bytes (for example an encoding conversion); save it with curl -o and try again',
     claimedModel:'Claimed model', model:'Model', verifyTime:'Verified at', notRecorded:'not recorded',
     sourceLabel:'Open-source verifier', localOnly:'Local WebCrypto · no network requests',
     rootPin:'(Real Nitro: AWS root is pinned by SHA-256 fingerprint in this page; no public key input needed.)',
@@ -1653,7 +1704,7 @@ const I18N={
     multipartLoaded:(ignored,got)=>'Recognized multipart response'+ignored+(got?', and loaded audit PCR0 from proof':', but audit PCR0 was not found'),
     ignoredLeading:(n)=>', ignored '+n+' leading blank byte(s) from the pasted text',
     proofOnlyLoad:(got)=>'Recognized tee.proof data'+(got?', and loaded audit PCR0 from proof':', but audit PCR0 was not found')+'; missing the preceding SSE response body, so full signature verification cannot complete',
-    sseLoaded:(got,count)=>'Recognized complete SSE response'+(count?', ignored '+count+' transport keepalive record(s) as proven by the signed hash':'')+(got?', and loaded audit PCR0 from proof':', but audit PCR0 was not found'),
+    sseLoaded:(got,count,crlf)=>'Recognized complete SSE response'+(count?', ignored '+count+' transport keepalive record(s) as proven by the signed hash':'')+(crlf?', restored '+crlf+' CRLF line ending(s) added by the saving tool back to LF as proven by the signed hash':'')+(got?', and loaded audit PCR0 from proof':', but audit PCR0 was not found'),
     proofParseFailed:(msg)=>'⚠️ tee.proof parse failed: '+msg,
     invalidJsonOrSse:'⚠️ Not valid JSON and not a complete SSE response',
     bundleRecognized:(got)=>'Recognized response bundle'+(got?', and loaded audit PCR0':', but audit PCR0 was not found'),
@@ -1664,7 +1715,12 @@ const I18N={
     intoAtt:'paste into att.b64', saveBundle:'save as bundle.json', intoResp:'paste into resp.b64',
     copied:(n,h)=>'✓ Copied ('+n+' characters) — '+h, copyFailed:'✕ Copy failed, please extract manually',
     missingBodyTitle:'⚠️ Missing response body', missingBodyText:(hash)=>'The hash <span class="dhash" style="padding:1px 6px">'+hash+'</span> is covered by the TEE signature, but no response body was provided. This page cannot recompute SHA-256 to prove the visible bytes match it.',
-    responseBodyBytes:'Response body (verified upstream bytes)', bytes:(n)=>n+' bytes', empty:'(empty)', clickFull:'…view full text ▸', fullBodyTitle:'Click to view the complete response body',
+    responseBodyBytes:'Response body (verified upstream bytes)', bytes:(n)=>n+' bytes', empty:'(empty)', clickFull:'…view full text ▸',
+    savedEncodingLoad:(enc)=>enc==='utf-8-bom'?'; removed a UTF-8 BOM added by the saving tool':'; the file was '+enc.toUpperCase()+' (usually Windows PowerShell 5.1 > redirection) and was converted back to UTF-8',
+    savedEncodingNote:(enc,ok)=>enc==='utf-8-bom'
+      ?'Your file started with a 3-byte UTF-8 BOM added by the saving tool; it was removed and is not part of the response.'
+      :'Your file was '+enc.toUpperCase()+' (usually Windows PowerShell 5.1 > redirection) and was converted back to UTF-8 here.'+(ok?' The converted bytes match the signed hash.':' If the response contains non-ASCII text such as Chinese, PowerShell may have damaged those bytes while saving; save it again with curl.exe -o and retry.'),
+    restoredLfNote:(n)=>'Your file had '+n+' CRLF line ending(s), usually added by a Windows saving tool. They were restored to the upstream LF: only line endings changed, no event content, and the restored bytes match the signed hash.', fullBodyTitle:'Click to view the complete response body',
     compareSigned:(signed,ok)=>'Compare with signed hash <span class="dhash" style="padding:1px 6px">'+signed+'</span> → '+(ok?'<b class="okc">match ✓</b>':'<b class="badc">mismatch ✗ · this response was modified</b>'),
     missingPcrTitle:'⚠️ Missing audit PCR0', missingPcrBody:'Paste or upload a response package or trust file containing expectedPcr0 / pcr0 / proof.pcr0 before verifying.',
     verifying1:'🔄 Verifying — parsing attestation, certificate chain, and signatures locally…',
@@ -1853,7 +1909,7 @@ function extractResponseField(b64, pick){
         if(value) return value;
       }catch{}
     }
-    for(const line of text.split('\n')){
+    for(const line of text.split(/\r?\n/)){
       const m=line.match(/^data: (.+)$/); if(!m||m[1]==='[DONE]') continue;
       let j; try{ j=JSON.parse(m[1]); }catch{ continue; }
       const value=pick(j);
@@ -1915,12 +1971,12 @@ function requestExample(mode, format='messages'){
   const formatLabel=apiFormat==='responses'?tt('responsesTab'):tt('messagesTab');
   return {
     title:formatLabel+' · '+(stream?tt('streamTitle'):tt('multipartTitle')),
-    intro:(stream?tt('streamIntro'):tt('multipartIntro'))+' '+(apiFormat==='responses'?tt('responsesFormatNote'):tt('messagesFormatNote')),
+    intro:(stream?tt('streamIntro'):tt('multipartIntro'))+' '+(apiFormat==='responses'?tt('responsesFormatNote'):tt('messagesFormatNote'))+' '+tt('saveIntact'),
     output:stream?'response.sse':'response.multipart',
     command:'curl '+(stream?'-N ':'')+url+' '+slash+'\n'
       +headers.join('\n')+'\n'
       +'  -d \''+body+'\' '+slash+'\n'
-      +'  > '+(stream?'response.sse':'response.multipart')
+      +'  -o '+(stream?'response.sse':'response.multipart')
   };
 }
 function showRequestExample(mode, format='messages'){
@@ -2063,7 +2119,7 @@ function setLoadMsg(text,kind){
 async function loadSseText(text){
   return loadSseBytes(te.encode(text));
 }
-async function loadMultipartBytes(bytes){
+async function loadMultipartBytes(bytes,savedFileEncoding=null){
   const parsed=parseProofMultipartBytes(bytes);
   if(!parsed)return false;
   if(!parsed.proof){
@@ -2077,18 +2133,23 @@ async function loadMultipartBytes(bytes){
     return true;
   }
   const normalized=await normalizePastedBodyBytes(parsed.bodyBytes,parsed.proof,!!parsed.tail);
-  loaded={v:2,responseBody_b64:bytesToB64(normalized.bodyBytes),proof:parsed.proof,_source:'multipart'};
+  loaded={v:2,responseBody_b64:bytesToB64(normalized.bodyBytes),proof:parsed.proof,_source:'multipart',_savedFileEncoding:savedFileEncoding};
   partialProof=null;
   const gotPcr0=adoptExpectedPcr0(parsed.proof);
   const ignored=normalized.ignoredLeadingBytes?tt('ignoredLeading',normalized.ignoredLeadingBytes):'';
-  setLoadMsg(tt('multipartLoaded',ignored,gotPcr0),gotPcr0?'ok':'error');
+  setLoadMsg(tt('multipartLoaded',ignored,gotPcr0)+(savedFileEncoding?tt('savedEncodingLoad',savedFileEncoding):''),gotPcr0?'ok':'error');
   refreshLoad();
   return true;
 }
-async function loadSseBytes(bytes){
+async function loadSseBytes(bytes,savedFileEncoding=null){
   const parsed=parseProofEventBytes(bytes);
   if(!parsed)return false;
-  const normalized=await normalizeSseTransportKeepalives(parsed.bodyBytes,parsed.proof);
+  let normalized=await normalizeSseTransportKeepalives(parsed.bodyBytes,parsed.proof);
+  let restoredLfLineEndings=0;
+  if(!normalized.ignoredTransportKeepaliveCount){
+    const lineEndings=await normalizeSseLineEndings(parsed.bodyBytes,parsed.proof);
+    if(lineEndings.restoredLfLineEndings){normalized=lineEndings; restoredLfLineEndings=lineEndings.restoredLfLineEndings;}
+  }
   const bodyText=td.decode(normalized.bodyBytes);
   if(!bodyText.trim()){
     partialProof=parsed.proof; loaded=null;
@@ -2103,15 +2164,19 @@ async function loadSseBytes(bytes){
     proof:parsed.proof,
     _source:'sse',
     _transportKeepaliveCount:normalized.ignoredTransportKeepaliveCount,
+    _restoredLfLineEndings:restoredLfLineEndings,
+    _savedFileEncoding:savedFileEncoding,
   };
   partialProof=null;
   const gotPcr0=adoptExpectedPcr0(parsed.proof);
-  setLoadMsg(tt('sseLoaded',gotPcr0,normalized.ignoredTransportKeepaliveCount),gotPcr0?'ok':'error');
+  setLoadMsg(tt('sseLoaded',gotPcr0,normalized.ignoredTransportKeepaliveCount,restoredLfLineEndings)+(savedFileEncoding?tt('savedEncodingLoad',savedFileEncoding):''),gotPcr0?'ok':'error');
   refreshLoad();
   return true;
 }
-async function ingestBytes(bytes){
-  try{ if(await loadMultipartBytes(bytes))return; if(await loadSseBytes(bytes))return; }catch(e){setLoadMsg(tt('proofParseFailed',e.message),'error');return;}
+async function ingestBytes(rawBytes){
+  const decoded=decodeSavedCapture(rawBytes);
+  const bytes=decoded.bytes;
+  try{ if(await loadMultipartBytes(bytes,decoded.encoding))return; if(await loadSseBytes(bytes,decoded.encoding))return; }catch(e){setLoadMsg(tt('proofParseFailed',e.message),'error');return;}
   await ingest(td.decode(bytes));
 }
 async function ingest(text){
@@ -2231,7 +2296,9 @@ async function runDataProcessing(options={}){
     const card=document.createElement('div'); card.className='dstep';
     card.innerHTML='<div class="dhead">'+(ok?'✅':'❌')+' '+r.title+'<span class="dim">'+tt('bytes',r.bytes.length)+'</span></div>'+
       '<div class="dflow"><span class="dprev" id="dprev-body" title="'+escHtml(tt('fullBodyTitle'))+'">'+prev+(r.bytes.length>90?' <span class="dprev-more">'+tt('clickFull')+'</span>':'')+'</span><span class="darrow">— SHA256 →</span><span class="dhash">'+short(r.hash)+'</span></div>'+
-      '<div class="dcmp">'+tt('compareSigned',short(r.signed),ok)+'</div>';
+      '<div class="dcmp">'+tt('compareSigned',short(r.signed),ok)+'</div>'+
+      (working._savedFileEncoding?'<div class="dcmp">'+tt('savedEncodingNote',working._savedFileEncoding,ok)+'</div>':'')+
+      (working._restoredLfLineEndings?'<div class="dcmp">'+tt('restoredLfNote',working._restoredLfLineEndings)+'</div>':'');
     el.appendChild(card);
     if(animate){ requestAnimationFrame(()=>card.classList.add('show')); await sleep(750); }
     else card.classList.add('show');

@@ -361,6 +361,125 @@ describe('parseTeeProofEvent', () => {
     expect(parsed.proof?.response_body_sha256).toBe(proof.response_body_sha256);
   });
 
+  it('restores CRLF-converted SSE captures to LF only when the signed hash proves it', () => {
+    const upstream = Buffer.from(
+      'event: message_start\ndata: {"type":"message_start","message":{"model":"claude-sonnet-4-6"}}\n\n'
+        + 'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      'utf8',
+    );
+    const { proof } = makeSigned({ responseBody: upstream });
+    const lf = Buffer.concat([upstream, Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8')]);
+    const crlf = Buffer.from(lf.toString('utf8').replace(/\n/g, '\r\n'), 'utf8');
+
+    const parsed = parseTeeProofCapture(crlf);
+
+    expect(parsed.body).toEqual(upstream);
+    expect(parsed.restoredLfLineEndings).toBe(6);
+    expect(verifyTeeExchange(
+      { expectedPcr0: PCR0, responseBody: parsed.body, proof: parsed.proof! },
+      { verifyAttestationDoc: stubAtt({ publicKey: proof.public_key }) },
+    ).ok).toBe(true);
+    // 在线代理看到的是原始字节,不做换行还原。
+    expect(parseTeeProofEvent(crlf).restoredLfLineEndings).toBeUndefined();
+  });
+
+  it('restores CRLF and proof-gated keepalives together', () => {
+    const upstream = Buffer.from('event: message_stop\ndata: {}\n\n', 'utf8');
+    const { proof } = makeSigned({ responseBody: upstream });
+    const lf = Buffer.concat([
+      Buffer.from(WOKEY_SSE_TRANSPORT_KEEPALIVE_V1.repeat(2), 'utf8'),
+      upstream,
+      Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8'),
+    ]);
+    const parsed = parseTeeProofCapture(Buffer.from(lf.toString('utf8').replace(/\n/g, '\r\n'), 'utf8'));
+
+    expect(parsed.body).toEqual(upstream);
+    expect(parsed.ignoredTransportKeepaliveCount).toBe(2);
+    expect(parsed.restoredLfLineEndings).toBe(7);
+  });
+
+  it('verifies Windows PowerShell 5.1 captures saved as UTF-16 with CRLF line endings', () => {
+    const upstream = Buffer.from(
+      'event: message_start\ndata: {"type":"message_start","message":{"model":"claude-sonnet-4-6"}}\n\n'
+        + 'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      'utf8',
+    );
+    const { proof } = makeSigned({ responseBody: upstream });
+    const text = Buffer.concat([upstream, Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8')])
+      .toString('utf8')
+      .replace(/\n/g, '\r\n') + '\r\n'; // Out-File 末尾再补一个换行
+    const le = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]);
+    const be = Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(Buffer.from(text, 'utf16le')).swap16()]);
+    const bomless = Buffer.from(text, 'utf16le');
+
+    for (const [capture, encoding] of [[le, 'utf-16le'], [be, 'utf-16be'], [bomless, 'utf-16le']] as const) {
+      const parsed = parseTeeProofCapture(capture);
+      expect(parsed.savedFileEncoding).toBe(encoding);
+      expect(parsed.body).toEqual(upstream);
+      expect(parsed.restoredLfLineEndings).toBe(6);
+      expect(verifyTeeExchange(
+        { expectedPcr0: PCR0, responseBody: parsed.body, proof: parsed.proof! },
+        { verifyAttestationDoc: stubAtt({ publicKey: proof.public_key }) },
+      ).ok).toBe(true);
+    }
+  });
+
+  it('drops a leading UTF-8 BOM added by the saving tool', () => {
+    const upstream = Buffer.from('event: message_stop\ndata: {}\n\n', 'utf8');
+    const { proof } = makeSigned({ responseBody: upstream });
+    const capture = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      upstream,
+      Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8'),
+    ]);
+
+    const parsed = parseTeeProofCapture(capture);
+
+    expect(parsed.savedFileEncoding).toBe('utf-8-bom');
+    expect(parsed.body).toEqual(upstream);
+    expect(parsed.restoredLfLineEndings).toBeUndefined();
+  });
+
+  it('fails UTF-16 captures whose non-ASCII text was damaged before saving', () => {
+    const upstream = Buffer.from('event: message_stop\ndata: {"text":"你好"}\n\n', 'utf8');
+    const { proof } = makeSigned({ responseBody: upstream });
+    const damaged = Buffer.concat([upstream, Buffer.from(`event: ${TEE_PROOF_EVENT}\ndata: ${JSON.stringify(proof)}\n\n`, 'utf8')])
+      .toString('latin1'); // 按控制台代码页误解码
+    const parsed = parseTeeProofCapture(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(damaged, 'utf16le')]));
+
+    expect(parsed.savedFileEncoding).toBe('utf-16le');
+    expect(parsed.proof?.response_body_sha256).toBe(proof.response_body_sha256);
+    expect(verifyTeeExchange(
+      { expectedPcr0: PCR0, responseBody: parsed.body, proof: parsed.proof! },
+      { verifyAttestationDoc: stubAtt({ publicKey: proof.public_key }) },
+    ).ok).toBe(false);
+  });
+
+  it('keeps CRLF bytes when restoring LF would not match the signed hash', () => {
+    const signed = Buffer.from('event: message_stop\ndata: {"text":"signed"}\n\n', 'utf8');
+    const { proof } = makeSigned({ responseBody: signed });
+    const tampered = Buffer.from('event: message_stop\r\ndata: {"text":"forged"}\r\n\r\n', 'utf8');
+    const parsed = parseTeeProofCapture(Buffer.concat([
+      tampered,
+      Buffer.from(`event: ${TEE_PROOF_EVENT}\r\ndata: ${JSON.stringify(proof)}\r\n\r\n`, 'utf8'),
+    ]));
+
+    expect(parsed.body).toEqual(tampered);
+    expect(parsed.restoredLfLineEndings).toBeUndefined();
+  });
+
+  it('keeps upstream CRLF bytes that are themselves signed', () => {
+    const signed = Buffer.from('event: message_stop\r\ndata: {}\r\n\r\n', 'utf8');
+    const { proof } = makeSigned({ responseBody: signed });
+    const parsed = parseTeeProofCapture(Buffer.concat([
+      signed,
+      Buffer.from(`event: ${TEE_PROOF_EVENT}\r\ndata: ${JSON.stringify(proof)}\r\n\r\n`, 'utf8'),
+    ]));
+
+    expect(parsed.body).toEqual(signed);
+    expect(parsed.restoredLfLineEndings).toBeUndefined();
+  });
+
   it('parses terminal-copied captures that start with raw response then proof part', () => {
     const rawBody = Buffer.from('{"id":"msg_1","content":[{"type":"text","text":"ok"}]}', 'utf8');
     const { proof } = makeSigned({ responseBody: rawBody });

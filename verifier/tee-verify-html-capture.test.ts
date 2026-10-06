@@ -16,7 +16,7 @@ const end = js.indexOf('// v2 字段分解声明:与', start);
 if (start < 0 || end < 0) throw new Error('failed to locate tee-verify.html capture parser block');
 
 const parser = new Function(
-  js.slice(start, end) + '\nreturn { parseProofEventBytes, parseProofEventText, parseProofMultipartBytes, normalizePastedBodyBytes, normalizeSseTransportKeepalives };',
+  js.slice(start, end) + '\nreturn { parseProofEventBytes, parseProofEventText, parseProofMultipartBytes, normalizePastedBodyBytes, normalizeSseTransportKeepalives, normalizeSseLineEndings, decodeSavedCapture };',
 )() as {
   parseProofEventBytes: (bytes: Uint8Array) => { bodyBytes: Uint8Array; proof: Record<string, unknown> } | null;
   parseProofEventText: (text: string) => { bodyBytes: Uint8Array; proof: Record<string, unknown> } | null;
@@ -34,6 +34,15 @@ const parser = new Function(
     ignoredTransportKeepaliveBytes: number;
     ignoredTransportKeepaliveCount: number;
   }>;
+  normalizeSseLineEndings: (
+    bodyBytes: Uint8Array,
+    proof?: Record<string, unknown>,
+  ) => Promise<{
+    bodyBytes: Uint8Array;
+    restoredLfLineEndings: number;
+    ignoredTransportKeepaliveCount: number;
+  }>;
+  decodeSavedCapture: (bytes: Uint8Array) => { bytes: Uint8Array; encoding: string | null };
 };
 
 const formatterStart = js.indexOf('function formatSseResponseBodyText');
@@ -54,7 +63,8 @@ const TRANSLATIONS = {
   messagesTab: 'Messages',
   responsesTab: 'Responses',
   messagesFormatNote: 'Messages 格式使用 <code>messages</code>，保留 <code>max_tokens</code>。',
-  responsesFormatNote: 'Responses 格式使用 <code>input</code>，不要带 <code>max_tokens</code> / <code>max_output_tokens</code>。'
+  responsesFormatNote: 'Responses 格式使用 <code>input</code>，不要带 <code>max_tokens</code> / <code>max_output_tokens</code>。',
+  saveIntact: '用 <code>-o</code> 让 curl 直接写文件。'
 };
 const tt = (key, ...args) => {
   const value = TRANSLATIONS[key] || key;
@@ -202,7 +212,7 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
     expect(stream.command).toContain('"messages": [');
     expect(stream.command).toContain('"max_tokens": 64');
     expect(stream.command).toContain('"stream": true');
-    expect(stream.command).toContain('> response.sse');
+    expect(stream.command).toContain('-o response.sse');
 
     const multipart = exampleBuilder.requestExample('multipart');
     expect(multipart.output).toBe('response.multipart');
@@ -212,7 +222,7 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
     expect(multipart.command).toContain('"messages": [');
     expect(multipart.command).toContain('"max_tokens": 64');
     expect(multipart.command).toContain('"stream": false');
-    expect(multipart.command).toContain('> response.multipart');
+    expect(multipart.command).toContain('-o response.multipart');
 
     const responseStream = exampleBuilder.requestExample('stream', 'responses');
     expect(responseStream.command).toContain('curl -N https://api.wokey.ai/v1/responses \\');
@@ -234,7 +244,7 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
     expect(responseMultipart.command).not.toContain('"messages"');
     expect(responseMultipart.command).not.toContain('max_tokens');
     expect(responseMultipart.command).not.toContain('max_output_tokens');
-    expect(responseMultipart.command).toContain('> response.multipart');
+    expect(responseMultipart.command).toContain('-o response.multipart');
   });
 
   it('shows parser/load failures as prominent load-message errors', () => {
@@ -274,6 +284,75 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
     expect(Buffer.from(normalized.bodyBytes)).toEqual(body);
     expect(normalized.ignoredTransportKeepaliveCount).toBe(2);
     expect(normalized.ignoredTransportKeepaliveBytes).toBe(Buffer.byteLength(marker.repeat(2)));
+  });
+
+  it('restores CRLF-converted file captures to LF only when the signed hash proves it', async () => {
+    const body = Buffer.from('event: message_start\ndata: {"type":"message_start"}\n\nevent: message_stop\ndata: {}\n\n', 'utf8');
+    const signedProof = { ...proof, response_body_sha256: createHash('sha256').update(body).digest('hex') };
+    const lf = Buffer.concat([
+      Buffer.from(': wokey-transport-keepalive-v1\n\n', 'utf8'),
+      body,
+      Buffer.from(`event: tee.proof\ndata: ${JSON.stringify(signedProof)}\n\n`, 'utf8'),
+    ]);
+    const parsed = parser.parseProofEventBytes(new Uint8Array(Buffer.from(lf.toString('utf8').replace(/\n/g, '\r\n'), 'utf8')));
+
+    const keepaliveOnly = await parser.normalizeSseTransportKeepalives(parsed!.bodyBytes, parsed!.proof);
+    const restored = await parser.normalizeSseLineEndings(parsed!.bodyBytes, parsed!.proof);
+
+    expect(keepaliveOnly.ignoredTransportKeepaliveCount).toBe(0);
+    expect(Buffer.from(restored.bodyBytes)).toEqual(body);
+    expect(restored.restoredLfLineEndings).toBe(8);
+    expect(restored.ignoredTransportKeepaliveCount).toBe(1);
+  });
+
+  it('decodes Windows PowerShell 5.1 UTF-16 captures before parsing the proof', async () => {
+    const body = Buffer.from('event: message_start\ndata: {"type":"message_start"}\n\n', 'utf8');
+    const signedProof = { ...proof, response_body_sha256: createHash('sha256').update(body).digest('hex') };
+    const text = Buffer.concat([body, Buffer.from(`event: tee.proof\ndata: ${JSON.stringify(signedProof)}\n\n`, 'utf8')])
+      .toString('utf8')
+      .replace(/\n/g, '\r\n') + '\r\n';
+    const le = new Uint8Array(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]));
+    const be = new Uint8Array(Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(Buffer.from(text, 'utf16le')).swap16()]));
+    const bomless = new Uint8Array(Buffer.from(text, 'utf16le'));
+
+    for (const [capture, encoding] of [[le, 'utf-16le'], [be, 'utf-16be'], [bomless, 'utf-16le']] as const) {
+      const decoded = parser.decodeSavedCapture(capture);
+      const parsed = parser.parseProofEventBytes(decoded.bytes);
+      const restored = await parser.normalizeSseLineEndings(parsed!.bodyBytes, parsed!.proof);
+
+      expect(decoded.encoding).toBe(encoding);
+      expect(parsed?.proof).toMatchObject(signedProof);
+      expect(Buffer.from(restored.bodyBytes)).toEqual(body);
+      expect(restored.restoredLfLineEndings).toBe(3);
+    }
+    expect(Buffer.from(le.subarray(0, 2))).toEqual(Buffer.from([0xff, 0xfe])); // 不改调用方的原始字节
+  });
+
+  it('drops a leading UTF-8 BOM and leaves plain UTF-8 captures untouched', () => {
+    const capture = Buffer.from('event: message_stop\ndata: {}\n\n', 'utf8');
+    const withBom = parser.decodeSavedCapture(new Uint8Array(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), capture])));
+    const plain = parser.decodeSavedCapture(new Uint8Array(capture));
+
+    expect(withBom.encoding).toBe('utf-8-bom');
+    expect(Buffer.from(withBom.bytes)).toEqual(capture);
+    expect(plain.encoding).toBeNull();
+    expect(Buffer.from(plain.bytes)).toEqual(capture);
+  });
+
+  it('keeps CRLF bytes when LF restoration does not match the signed hash', async () => {
+    const signed = Buffer.from('event: message_stop\ndata: {"text":"signed"}\n\n', 'utf8');
+    const signedProof = { ...proof, response_body_sha256: createHash('sha256').update(signed).digest('hex') };
+    const tampered = new Uint8Array(Buffer.from('event: message_stop\r\ndata: {"text":"forged"}\r\n\r\n', 'utf8'));
+    const upstreamCrlf = new Uint8Array(Buffer.from('event: message_stop\r\ndata: {}\r\n\r\n', 'utf8'));
+    const upstreamProof = { ...proof, response_body_sha256: createHash('sha256').update(upstreamCrlf).digest('hex') };
+
+    const forged = await parser.normalizeSseLineEndings(tampered, signedProof);
+    const signedCrlf = await parser.normalizeSseLineEndings(upstreamCrlf, upstreamProof);
+
+    expect(Buffer.from(forged.bodyBytes)).toEqual(Buffer.from(tampered));
+    expect(forged.restoredLfLineEndings).toBe(0);
+    expect(Buffer.from(signedCrlf.bodyBytes)).toEqual(Buffer.from(upstreamCrlf));
+    expect(signedCrlf.restoredLfLineEndings).toBe(0);
   });
 
   it('preserves a matching leading upstream comment covered by the signed hash', async () => {
@@ -488,6 +567,14 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
     expect(modelExtractor.maskFingerprint('23696aa5aa2c2dbacfe6dc48c21e67400dd2571f7105c359dd072d3ae14cfac10bfe8509ae7e3db2a078d630d81efec7'))
       .toBe('23696aa5…d81efec7');
     expect(modelExtractor.formatLocalVerifyTime(new Date(2026, 5, 21, 11, 7))).toBe('2026-06-21 11:07');
+  });
+
+  it('extracts the served model from CRLF SSE response events', () => {
+    const rawBody = 'event: message_start\r\ndata: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01Q5jrW2vbH2RcFaZr66gJpN"}}\r\n\r\n';
+    const b64 = Buffer.from(rawBody, 'utf8').toString('base64');
+
+    expect(modelExtractor.extractServedModel(b64)).toBe('claude-sonnet-4-6');
+    expect(modelExtractor.extractMessageId(b64)).toBe('msg_01Q5jrW2vbH2RcFaZr66gJpN');
   });
 
   it('extracts the served model from SSE response events', () => {

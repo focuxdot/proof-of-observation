@@ -92,7 +92,11 @@ Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双构，两次均得到上面的值
 raw response body 后面直接接 proof part 和 closing boundary,也可以直接验证。慢速 SSE
 响应在首个上游事件前或完整 SSE 记录之间可能包含传输层
 `: wokey-transport-keepalive-v1` 注释；验证器只会在签名响应哈希能够证明完整剥离结果时
-忽略位于记录边界的精确匹配记录。保存响应材料后运行：
+忽略位于记录边界的精确匹配记录。存成文件的 SSE 如果被保存工具把 LF 改成了 CRLF(Windows 上
+PowerShell 的 `>` 重定向、记事本另存等),验证器只在还原为 LF 后与签名响应哈希一致时才还原，并提示换行被改过。
+文件被存成 UTF-16(Windows PowerShell 5.1 的 `>`)或开头带 UTF-8 BOM 时，验证器先转回 UTF-8 再解析并提示，
+是否通过仍由签名响应哈希决定；PowerShell 5.1 可能已改坏响应里的中文等非 ASCII 字节，这种情况会验证失败。
+请用 `curl -o`(Windows 用 `curl.exe -o`)直接写文件。保存响应材料后运行：
 
 ```bash
 # CLI
