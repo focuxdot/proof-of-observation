@@ -928,6 +928,24 @@ function parseLooseProofData(text){
     return isProofWire(o)?o:null;
   }catch{return null;}
 }
+// 四种材料格式都没认出时给出可操作的原因,别只说「不是 JSON / SSE」。
+// 只用于报错文案,不参与任何验签判定。
+function diagnoseUnrecognizedCapture(text){
+  const s=String(text||'');
+  const markers=[...s.matchAll(/^event:[ \t]*tee\.proof[ \t]*\r?$/gm)];
+  if(markers.length){
+    const events=s.slice(markers[markers.length-1].index).split(/\r?\n[ \t]*\r?\n/);
+    if(events.slice(1).some(e=>e.trim()))return 'proofNotLast';
+    return 'proofEventIncomplete';
+  }
+  if(/^(event|data):/m.test(s)){
+    const ended=/^event:[ \t]*(message_stop|response\.completed|response\.incomplete|response\.failed|error)[ \t]*\r?$/m.test(s)
+      || /^data:[ \t]*\[DONE\][ \t]*\r?$/m.test(s);
+    return ended?'sseWithoutProof':'sseTruncated';
+  }
+  if(/^[{\[]/.test(s.trim()))return 'invalidJson';
+  return 'unrecognizedCapture';
+}
 function findBytes(bytes,needle,offset=0){
   if(!needle.length||needle.length>bytes.length)return -1;
   for(let i=Math.max(0,offset);i<=bytes.length-needle.length;i++)if(startsWithBytes(bytes,needle,i))return i;
@@ -1606,7 +1624,12 @@ const I18N={
     proofOnlyLoad:(got)=>'已识别 tee.proof data'+(got?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0')+'；缺少前面的 SSE 响应正文，不能完成验签',
     sseLoaded:(got,count,crlf)=>'已识别完整 SSE 响应'+(count?'，已按签名哈希忽略 '+count+' 条传输 keepalive':'')+(crlf?'，文件里 '+crlf+' 处换行被保存工具改成了 CRLF，已按签名哈希还原为 LF':'')+(got?'，并从 proof 读取审计 PCR0':'，但未找到审计 PCR0'),
     proofParseFailed:(msg)=>'⚠️ tee.proof 解析失败：'+msg,
-    invalidJsonOrSse:'⚠️ 不是合法 JSON，也不是完整 SSE',
+    proofNotLast:'⚠️ 找到了 event: tee.proof，但它后面还有其他内容（例如复制时带上的 shell 提示符）。tee.proof 必须是响应的最后一段，请删掉它后面的内容再试',
+    proofEventIncomplete:'⚠️ 找到了 event: tee.proof，但事件不完整（缺少 data: 行或格式不对），请重新复制完整的 tee.proof 事件',
+    sseWithoutProof:'⚠️ 这段 SSE 响应已完整结束，但末尾没有 event: tee.proof：这次响应没有附带证明（只有经 TEE 出口原样转发的流式响应才会附带）',
+    sseTruncated:'⚠️ 这段 SSE 响应不完整：没读到响应结尾，也没有 event: tee.proof。请确认复制或保存到了响应的最后',
+    invalidJson:'⚠️ 内容看起来是 JSON，但无法解析，可能没复制完整',
+    unrecognizedCapture:'⚠️ 没认出这段内容。请粘贴完整的 response.sse（末尾有 event: tee.proof）或 response.multipart',
     bundleRecognized:(got)=>'已识别响应包'+(got?'，并读取审计 PCR0':'，但未找到审计 PCR0'),
     trustRecognized:'已识别信任锚', trustMissingPcr:'⚠️ 信任锚缺少 expectedPcr0 / pcr0',
     notBundleOrTrust:'⚠️ 既不是响应包也不是信任锚',
@@ -1706,7 +1729,12 @@ const I18N={
     proofOnlyLoad:(got)=>'Recognized tee.proof data'+(got?', and loaded audit PCR0 from proof':', but audit PCR0 was not found')+'; missing the preceding SSE response body, so full signature verification cannot complete',
     sseLoaded:(got,count,crlf)=>'Recognized complete SSE response'+(count?', ignored '+count+' transport keepalive record(s) as proven by the signed hash':'')+(crlf?', restored '+crlf+' CRLF line ending(s) added by the saving tool back to LF as proven by the signed hash':'')+(got?', and loaded audit PCR0 from proof':', but audit PCR0 was not found'),
     proofParseFailed:(msg)=>'⚠️ tee.proof parse failed: '+msg,
-    invalidJsonOrSse:'⚠️ Not valid JSON and not a complete SSE response',
+    proofNotLast:'⚠️ Found event: tee.proof, but more content follows it (for example a shell prompt copied along). tee.proof must be the last part of the response; remove everything after it and try again',
+    proofEventIncomplete:'⚠️ Found event: tee.proof, but the event is incomplete (missing its data: line or malformed). Copy the whole tee.proof event again',
+    sseWithoutProof:'⚠️ This SSE response ended normally but has no event: tee.proof at the end: the response carries no proof (only streams relayed byte-for-byte through the TEE exit include one)',
+    sseTruncated:'⚠️ This SSE response is incomplete: it has no end of response and no event: tee.proof. Make sure you copied or saved it to the very end',
+    invalidJson:'⚠️ This looks like JSON but cannot be parsed; it may have been copied incompletely',
+    unrecognizedCapture:'⚠️ Could not recognize this content. Paste the complete response.sse (ending with event: tee.proof) or response.multipart',
     bundleRecognized:(got)=>'Recognized response bundle'+(got?', and loaded audit PCR0':', but audit PCR0 was not found'),
     trustRecognized:'Recognized trust anchor', trustMissingPcr:'⚠️ Trust anchor is missing expectedPcr0 / pcr0',
     notBundleOrTrust:'⚠️ Not a response bundle or trust anchor',
@@ -2190,7 +2218,7 @@ async function ingest(text){
     refreshLoad();
     return;
   }
-  let o; try{o=JSON.parse(text);}catch{setLoadMsg(tt('invalidJsonOrSse'),'error');return;}
+  let o; try{o=JSON.parse(text);}catch{setLoadMsg(tt(diagnoseUnrecognizedCapture(text)),'error');return;}
   if(o.proof&&o.responseBody_b64){loaded=o;partialProof=null;const gotPcr0=adoptExpectedPcr0(o);setLoadMsg(tt('bundleRecognized',gotPcr0),gotPcr0?'ok':'error');}
   else if(o.awsRootPublicKeyPem||o.expectedPcr0||o.expected_pcr0||o.pcr0){trust={expectedPcr0:expectedPcr0FromObject(o),awsRootPublicKeyPem:o.awsRootPublicKeyPem};trustLoaded=!!trust.expectedPcr0;setLoadMsg(trustLoaded?tt('trustRecognized'):tt('trustMissingPcr'),trustLoaded?'ok':'error');}
   else if(isProofWire(o)){partialProof=o; loaded=null; const gotPcr0=adoptExpectedPcr0(o); setLoadMsg(tt('proofOnlyLoad',gotPcr0),'error');}
@@ -2482,9 +2510,9 @@ function rerenderVerificationForLanguage(){
 }
 
 // 「开始验证」一键搞定:粘贴框有内容就先解析,再跑验证。
-$('play').addEventListener('click',()=>{
+$('play').addEventListener('click',async()=>{
   const v=$('pasteInput').value.trim();
-  if(!working && v) ingest(v);                 // 框里有内容但还没解析 → 现在解析
+  if(!working && v) await ingest(v);           // 框里有内容但还没解析 → 现在解析(须等完,否则下面读到的是上一次的状态)
   if(working){ runVerification().catch(e=>showVerdictMessage('bad',tt('verifyException'),String(e&&e.message||e))); return; }
   if(partialProof){
     working={v:2,responseBody_b64:null,proof:partialProof,_source:'proof-only'};

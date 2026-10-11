@@ -16,7 +16,7 @@ const end = js.indexOf('// v2 字段分解声明:与', start);
 if (start < 0 || end < 0) throw new Error('failed to locate tee-verify.html capture parser block');
 
 const parser = new Function(
-  js.slice(start, end) + '\nreturn { parseProofEventBytes, parseProofEventText, parseProofMultipartBytes, normalizePastedBodyBytes, normalizeSseTransportKeepalives, normalizeSseLineEndings, decodeSavedCapture };',
+  js.slice(start, end) + '\nreturn { parseProofEventBytes, parseProofEventText, parseProofMultipartBytes, normalizePastedBodyBytes, normalizeSseTransportKeepalives, normalizeSseLineEndings, decodeSavedCapture, diagnoseUnrecognizedCapture };',
 )() as {
   parseProofEventBytes: (bytes: Uint8Array) => { bodyBytes: Uint8Array; proof: Record<string, unknown> } | null;
   parseProofEventText: (text: string) => { bodyBytes: Uint8Array; proof: Record<string, unknown> } | null;
@@ -43,6 +43,7 @@ const parser = new Function(
     ignoredTransportKeepaliveCount: number;
   }>;
   decodeSavedCapture: (bytes: Uint8Array) => { bytes: Uint8Array; encoding: string | null };
+  diagnoseUnrecognizedCapture: (text: string) => string;
 };
 
 const formatterStart = js.indexOf('function formatSseResponseBodyText');
@@ -250,7 +251,7 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
   it('shows parser/load failures as prominent load-message errors', () => {
     expect(html).toContain('.hint.load-msg.error');
     expect(html).toContain('function setLoadMsg');
-    expect(html).toContain("setLoadMsg(tt('invalidJsonOrSse'),'error')");
+    expect(html).toContain("setLoadMsg(tt(diagnoseUnrecognizedCapture(text)),'error')");
     expect(html).toContain("setLoadMsg(tt('noInputLoad'),'error')");
   });
 
@@ -461,6 +462,20 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
 
     expect(parsed?.proof).toMatchObject(proof);
     expect(Buffer.from(parsed!.bodyBytes).toString('utf8')).toBe(body);
+  });
+
+  it('explains why an unrecognized capture was rejected', () => {
+    const body = 'event: message_start\ndata: {"type":"message_start"}\n\n';
+    const proofEvent = `event: tee.proof\ndata: ${JSON.stringify(proof)}\n\n`;
+    const diagnose = parser.diagnoseUnrecognizedCapture;
+
+    expect(parser.parseProofEventText(`${body}${proofEvent}user@host ~ %`)).toBeNull();
+    expect(diagnose(`${body}${proofEvent}user@host ~ %`)).toBe('proofNotLast');
+    expect(diagnose(`${body}event: tee.proof\n`)).toBe('proofEventIncomplete');
+    expect(diagnose(`${body}event: message_stop\ndata: {"type":"message_stop"}\n\n`)).toBe('sseWithoutProof');
+    expect(diagnose(`${body}event: content_block_delta\ndata: {"type":"content_block_delta"}\n\n`)).toBe('sseTruncated');
+    expect(diagnose('{"proof":')).toBe('invalidJson');
+    expect(diagnose('hello')).toBe('unrecognizedCapture');
   });
 
   it('parses multipart captures while preserving the raw response part exactly', () => {
