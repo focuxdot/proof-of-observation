@@ -946,6 +946,10 @@ function diagnoseUnrecognizedCapture(text){
   if(/^[{\[]/.test(s.trim()))return 'invalidJson';
   return 'unrecognizedCapture';
 }
+// 粘的是不带证明的普通 JSON 响应正文(非流式请求没开 multipart proof 模式时常见)。
+function isPlainResponseBody(o){
+  return !!o && typeof o==='object' && (o.type==='message' || o.object==='response' || o.object==='chat.completion');
+}
 function findBytes(bytes,needle,offset=0){
   if(!needle.length||needle.length>bytes.length)return -1;
   for(let i=Math.max(0,offset);i<=bytes.length-needle.length;i++)if(startsWithBytes(bytes,needle,i))return i;
@@ -1632,7 +1636,8 @@ const I18N={
     unrecognizedCapture:'⚠️ 没认出这段内容。请粘贴完整的 response.sse（末尾有 event: tee.proof）或 response.multipart',
     bundleRecognized:(got)=>'已识别响应包'+(got?'，并读取审计 PCR0':'，但未找到审计 PCR0'),
     trustRecognized:'已识别信任锚', trustMissingPcr:'⚠️ 信任锚缺少 expectedPcr0 / pcr0',
-    notBundleOrTrust:'⚠️ 既不是响应包也不是信任锚',
+    plainResponseBody:'⚠️ 这是没有附带证明的普通响应正文。非流式请求要带上请求头 x-wokey-tee-proof-mode: multipart，并保存完整的 response.multipart',
+    notBundleOrTrust:'⚠️ 没认出这段 JSON：它不是响应材料，也不是导出的响应包或信任锚文件',
     downloadMissing:'✕ 未找到内嵌脚本', downloaded:'✓ 已下载 —— node verify-attestation-cose.mjs att.b64',
     noAtt:'✕ 这份材料没有 attestation 字符串', noBundle:'✕ 没有可导出的 bundle', noResp:'✕ 这份材料没有响应正文',
     intoAtt:'粘进 att.b64', saveBundle:'存成 bundle.json', intoResp:'粘进 resp.b64',
@@ -1737,7 +1742,8 @@ const I18N={
     unrecognizedCapture:'⚠️ Could not recognize this content. Paste the complete response.sse (ending with event: tee.proof) or response.multipart',
     bundleRecognized:(got)=>'Recognized response bundle'+(got?', and loaded audit PCR0':', but audit PCR0 was not found'),
     trustRecognized:'Recognized trust anchor', trustMissingPcr:'⚠️ Trust anchor is missing expectedPcr0 / pcr0',
-    notBundleOrTrust:'⚠️ Not a response bundle or trust anchor',
+    plainResponseBody:'⚠️ This is a plain response body without a proof. For non-streaming requests, send the header x-wokey-tee-proof-mode: multipart and save the full response.multipart',
+    notBundleOrTrust:'⚠️ Could not recognize this JSON: it is not response material, an exported response bundle, or a trust anchor file',
     downloadMissing:'✕ Embedded script not found', downloaded:'✓ Downloaded — node verify-attestation-cose.mjs att.b64',
     noAtt:'✕ This material has no attestation string', noBundle:'✕ No bundle can be exported', noResp:'✕ This material has no response body',
     intoAtt:'paste into att.b64', saveBundle:'save as bundle.json', intoResp:'paste into resp.b64',
@@ -2222,7 +2228,7 @@ async function ingest(text){
   if(o.proof&&o.responseBody_b64){loaded=o;partialProof=null;const gotPcr0=adoptExpectedPcr0(o);setLoadMsg(tt('bundleRecognized',gotPcr0),gotPcr0?'ok':'error');}
   else if(o.awsRootPublicKeyPem||o.expectedPcr0||o.expected_pcr0||o.pcr0){trust={expectedPcr0:expectedPcr0FromObject(o),awsRootPublicKeyPem:o.awsRootPublicKeyPem};trustLoaded=!!trust.expectedPcr0;setLoadMsg(trustLoaded?tt('trustRecognized'):tt('trustMissingPcr'),trustLoaded?'ok':'error');}
   else if(isProofWire(o)){partialProof=o; loaded=null; const gotPcr0=adoptExpectedPcr0(o); setLoadMsg(tt('proofOnlyLoad',gotPcr0),'error');}
-  else {setLoadMsg(tt('notBundleOrTrust'),'error');return;}
+  else {setLoadMsg(tt(isPlainResponseBody(o)?'plainResponseBody':'notBundleOrTrust'),'error');return;}
   refreshLoad();
 }
 const readFiles=(fs)=>{for(const f of fs)f.arrayBuffer().then(b=>ingestBytes(new Uint8Array(b)));};

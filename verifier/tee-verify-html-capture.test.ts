@@ -16,7 +16,7 @@ const end = js.indexOf('// v2 字段分解声明:与', start);
 if (start < 0 || end < 0) throw new Error('failed to locate tee-verify.html capture parser block');
 
 const parser = new Function(
-  js.slice(start, end) + '\nreturn { parseProofEventBytes, parseProofEventText, parseProofMultipartBytes, normalizePastedBodyBytes, normalizeSseTransportKeepalives, normalizeSseLineEndings, decodeSavedCapture, diagnoseUnrecognizedCapture };',
+  js.slice(start, end) + '\nreturn { parseProofEventBytes, parseProofEventText, parseProofMultipartBytes, normalizePastedBodyBytes, normalizeSseTransportKeepalives, normalizeSseLineEndings, decodeSavedCapture, diagnoseUnrecognizedCapture, isPlainResponseBody };',
 )() as {
   parseProofEventBytes: (bytes: Uint8Array) => { bodyBytes: Uint8Array; proof: Record<string, unknown> } | null;
   parseProofEventText: (text: string) => { bodyBytes: Uint8Array; proof: Record<string, unknown> } | null;
@@ -44,6 +44,7 @@ const parser = new Function(
   }>;
   decodeSavedCapture: (bytes: Uint8Array) => { bytes: Uint8Array; encoding: string | null };
   diagnoseUnrecognizedCapture: (text: string) => string;
+  isPlainResponseBody: (o: unknown) => boolean;
 };
 
 const formatterStart = js.indexOf('function formatSseResponseBodyText');
@@ -476,6 +477,13 @@ describe('docs/tee-verify.html capture parser preserves signed response bytes', 
     expect(diagnose(`${body}event: content_block_delta\ndata: {"type":"content_block_delta"}\n\n`)).toBe('sseTruncated');
     expect(diagnose('{"proof":')).toBe('invalidJson');
     expect(diagnose('hello')).toBe('unrecognizedCapture');
+  });
+
+  it('recognizes a plain JSON response body pasted without a proof', () => {
+    expect(parser.isPlainResponseBody({ type: 'message', content: [] })).toBe(true);
+    expect(parser.isPlainResponseBody({ object: 'response', output: [] })).toBe(true);
+    expect(parser.isPlainResponseBody({ object: 'chat.completion', choices: [] })).toBe(true);
+    expect(parser.isPlainResponseBody({ foo: 1 })).toBe(false);
   });
 
   it('parses multipart captures while preserving the raw response part exactly', () => {
