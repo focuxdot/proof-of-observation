@@ -55,17 +55,18 @@ enclave 的完整受度量 TCB 位于 [`enclave/`](enclave)；在固定工具链
 **当前生产发布版的规范 PCR0：**
 
 ```
-437cbab8c2e5dd11a35ae5b062fe115623a013910b7c26b333e2b3af477944d630fb1dcd76fa9a9b1eefdf1d1021dec2
+4643d6b63fc240c16cf00eb54d92a92bb6086786fbc5d24f236a94a8bc774b5c88e689d62a794cbd8bdb6e7eba422d2a
 ```
 
 该生产值对应受度量源码 revision
-`03fe2a3eb6d05e1ec94f7f52ac0521d42560a731`。2026-09-09 在 aarch64 构建机以
-Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双构，两次均得到上面的值。本版保持192-worker
-池不变，将受度量的控制/上游 I/O 兜底提升到1860秒，让 Platform 的1800秒响应空闲超时
-保持权威，并加入 Grok 1.0.24 的混合密钥交换与签名配置。上一生产值 `b1ec0580…f880` 作为历史值保留。完整流程见
+`da29634a63e14b18bc1a7a78855c8d71cf0a0c32`。2026-11-05 在 aarch64 构建机以
+Docker 29.1.3 + nitro-cli 1.4.5 清空缓存双构，两次均得到上面的值。本版把单帧请求体上限
+（`MAX_REQ_FRAME`）从64MiB提到100MiB；其余受度量源（含192-worker池、1860秒受度量 I/O 兜底、
+Grok 1.0.24 配置）与 revision `03fe2a3e` 逐字节相同。上一生产值 `437cbab8…1dec2`
+（revision `03fe2a3e`）及更早的 `b1ec0580…f880` 作为历史值保留。完整流程见
 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md)。
 
-**2026-09-09 核验的生产状态：**运行中的飞地使用上面的规范值。
+**2026-11-05 核验的生产状态：**运行中的飞地使用上面的规范值。
 
 ## 协议规范
 

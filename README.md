@@ -61,20 +61,21 @@ measured TCB lives in [`enclave/`](enclave); built twice with a pinned toolchain
 **Canonical PCR0 of the current production release:**
 
 ```
-437cbab8c2e5dd11a35ae5b062fe115623a013910b7c26b333e2b3af477944d630fb1dcd76fa9a9b1eefdf1d1021dec2
+4643d6b63fc240c16cf00eb54d92a92bb6086786fbc5d24f236a94a8bc774b5c88e689d62a794cbd8bdb6e7eba422d2a
 ```
 
 This production value corresponds to measured-source revision
-`03fe2a3eb6d05e1ec94f7f52ac0521d42560a731`. On 2026-09-09 it was built twice
+`da29634a63e14b18bc1a7a78855c8d71cf0a0c32`. On 2026-11-05 it was built twice
 from empty caches on an aarch64 host with Docker 29.1.3 and nitro-cli 1.4.5;
-both builds produced the value above. This revision preserves the 192-worker pool and
-1860-second measured control/upstream I/O guards, leaving Platform's
-1800-second response-idle timeout authoritative. It also adds the current Grok
-1.0.24 hybrid key-exchange and signature profile. The previous production PCR0
-`b1ec0580…f880` remains historical. Full procedure:
+both builds produced the value above. This revision raises the single-frame
+request-body limit (`MAX_REQ_FRAME`) from 64 MiB to 100 MiB; the rest of the
+measured source, including the 192-worker pool, the 1860-second measured I/O
+guards and the Grok 1.0.24 profile, is byte-identical to revision `03fe2a3e`.
+The previous production PCR0 `437cbab8…1dec2` (revision `03fe2a3e`) and the
+earlier `b1ec0580…f880` remain historical. Full procedure:
 [`docs/tee-reproducible-build.md`](docs/tee-reproducible-build.md).
 
-**Production status checked on 2026-09-09:** the running enclave measures the canonical value above.
+**Production status checked on 2026-11-05:** the running enclave measures the canonical value above.
 
 ## Specification
 
