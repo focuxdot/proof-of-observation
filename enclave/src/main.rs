@@ -41,7 +41,7 @@ const DOMAIN_V2: &str = "tee-exchange-v2";
 const MAX_HEAD: usize = 64 * 1024;
 const MAX_RESP: usize = 64 * 1024 * 1024;
 const MAX_REQ_HEAD: usize = 1024 * 1024;
-const MAX_REQ_FRAME: usize = 64 * 1024 * 1024;
+const MAX_REQ_FRAME: usize = 100 * 1024 * 1024;
 // Platform owns the 1800s response-idle classification. These measured-image
 // guards sit 60s above it so they clean up only if the relay fails to do so.
 const CONTROL_IO_TIMEOUT: Duration = Duration::from_secs(1860);
